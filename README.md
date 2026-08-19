@@ -57,7 +57,7 @@ APEX transforms motorcycle helmets into autonomous edge nodes that:
 - **Language:** Python 3.10+
 - **Edge Inference:** scikit-learn, CRFsuite (ARMv7-optimized)
 - **Cloud API:** FastAPI with async worker pools
-- **Database:** PostgreSQL (cloud) + SQLite (edge fallback)
+- **Database:** PostgreSQL (cloud) + Influxdb (edge fallback)
 - **Visualization:** Streamlit dashboards + Grafana (local) + Leaflet.js (offline maps)
 - **NLP:** Vosk (offline STT) + Piper TTS (offline speech synthesis)
 - **Sensor Fusion:** Kalman Filter for IMU + GPS merge
@@ -200,7 +200,7 @@ The dashboard displays:
 
 ### Data Export
 Post-ride data is available in:
-- `data/telemetry.db` – SQLite database (local edge storage)
+- `data/telemetry.db` – Influx database (local edge storage)
 - `data/telemetry.csv` – CSV export for post-processing
 
 ---
@@ -224,14 +224,6 @@ gps = GPSModule()
 lat, lon, altitude, velocity = gps.get_position()
 ```
 
-### `traffic_light.py`
-Status indicator system for operational states.
-```python
-from traffic_light import StatusIndicator
-status = StatusIndicator()
-status.set_green()  # All systems nominal
-status.set_red()    # Emergency state
-```
 
 ---
 
@@ -252,7 +244,7 @@ status.set_red()    # Emergency state
 | **Sensor Loop Frequency** | 100Hz (IMU), 10Hz (GPS), Continuous (Audio) |
 | **Latency (Voice → Response)** | <500ms (offline NLP) |
 | **Battery Life** | 6–8 hours (18650 @ 2000mAh continuous use) |
-| **Storage (Edge)** | 32GB microSD (local SQLite buffers) |
+| **Storage (Edge)** | 32GB microSD (local Influxdb buffers) |
 | **Network Dependency** | Optional (fallback to local buffering) |
 | **Processing Power** | Raspberry Pi Zero 2 W (ARMv7 1.0GHz dual-core) |
 
