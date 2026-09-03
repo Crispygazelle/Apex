@@ -100,9 +100,9 @@ apex/
 ├── mpu.py                 # MPU6050 IMU driver (6-axis kinetics)
 ├── read_gps.py            # NEO-M8N GPS NMEA parser
 ├── traffic_light.py       # Status indicator & state machine
-├── telemetry_daemon.py    # Main async sensor fusion loop
+├── daemon.py              # Main async sensor fusion loop
 ├── npl_intent_parser.py   # Offline voice command processor
-├── kalman_filter.py       # Sensor fusion algorithm
+├── kalman.py              # Sensor fusion algorithm
 ├── requirements.txt       # Python dependencies
 ├── venv/                  # Virtual environment
 ├── config.json            # Sensor calibration & thresholds
@@ -169,7 +169,7 @@ sudo reboot
 
 ### 6. **Run the System**
 ```bash
-python3 telemetry_daemon.py
+python3 daemon.py
 ```
 
 ---
@@ -297,7 +297,7 @@ lat, lon, altitude, velocity = gps.get_position()
 ### Battery Draining Fast
 - Reduce IMU polling frequency to 50Hz
 - Disable Streamlit dashboard (use offline only)
-- Check for blocking I/O operations in `telemetry_daemon.py`
+- Check for blocking I/O operations in `daemon.py`
 
 ---
 
@@ -346,4 +346,3 @@ For questions, issues, or feature requests, open a GitHub issue or reach out to 
 
 **Last Updated:** August 2026  
 **Status:** 🟢 Active Development
-
