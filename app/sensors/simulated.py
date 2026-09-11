@@ -60,12 +60,12 @@ class RideProfile:
     start_longitude: float = 77.5946
     start_altitude_m: float = 920.0
     start_heading_deg: float = 45.0
-    cruise_mps: float = 13.9  # ~50 km/h
+    cruise_mps: float = 22.2  # ~80 km/h
     stationary_s: float = 4.0
-    spool_up_s: float = 8.0
+    spool_up_s: float = 5.0
     speed_wave_period_s: float = 45.0
-    heading_amplitude_deg: float = 25.0
-    heading_period_s: float = 30.0
+    heading_amplitude_deg: float = 40.0
+    heading_period_s: float = 15.0
     hill_amplitude_m: float = 35.0
     hill_period_s: float = 120.0
     brake_at_s: float = 65.0

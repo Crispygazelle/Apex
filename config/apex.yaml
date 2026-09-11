@@ -98,7 +98,7 @@ safety:
     green_pin: 22
 
 voice:
-  enabled: false
+  enabled: true
   wake_words: ["apex", "hey apex"]
   vosk_model_path: models/vosk-model-small-en-us-0.15
   piper_model_path: models/en_US-amy-low.onnx
