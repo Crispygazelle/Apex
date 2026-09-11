@@ -56,9 +56,9 @@ class TrueState:
 class RideProfile:
     """Shape of the synthetic ride."""
 
-    start_latitude: float = 12.9716  # Bengaluru, matching the delivery-fleet use case
-    start_longitude: float = 77.5946
-    start_altitude_m: float = 920.0
+    start_latitude: float = 21.14631  # Nagpur (Sitabuldi / city centre)
+    start_longitude: float = 79.08491
+    start_altitude_m: float = 310.0
     start_heading_deg: float = 45.0
     cruise_mps: float = 22.2  # ~80 km/h
     stationary_s: float = 4.0
