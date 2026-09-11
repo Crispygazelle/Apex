@@ -1,0 +1,108 @@
+# APEX node configuration.
+#
+# Any value here can be overridden from the environment without editing the
+# file, using double-underscore paths:
+#   APEX__NODE__SENSOR_BACKEND=hardware
+#   APEX__STORAGE__TOKEN=my-influx-token
+#
+# Keep secrets out of this file and pass them via the environment.
+
+node:
+  helmet_id: helmet01
+  # sim = no hardware needed, runs anywhere. hardware = real Pi sensors.
+  sensor_backend: sim
+  log_level: INFO
+  data_dir: data
+
+sensors:
+  imu:
+    enabled: true
+    rate_hz: 100.0
+    i2c_bus: 1
+    i2c_address: 0x68
+    accel_range_g: 8      # 2 / 4 / 8 / 16
+    gyro_range_dps: 500   # 250 / 500 / 1000 / 2000
+  gps:
+    enabled: true
+    rate_hz: 10.0
+    port: /dev/ttyAMA0
+    baudrate: 9600
+    read_timeout_s: 1.0
+  mic:
+    enabled: false        # turned on by the voice layer
+    sample_rate: 16000    # Vosk expects 16 kHz mono
+    channels: 1
+    chunk: 1024
+    device_index: null
+
+calibration:
+  auto_calibrate_on_start: true
+  stationary_samples: 200
+  stationary_gyro_threshold_dps: 2.0
+  accel_bias_mps2: [0.0, 0.0, 0.0]
+  gyro_bias_dps: [0.0, 0.0, 0.0]
+  accel_scale: [1.0, 1.0, 1.0]
+  gravity_mps2: 9.80665
+  # Must sit well below real riding dynamics. Raising this makes the gravity
+  # estimate chase rider acceleration and swallow braking events.
+  gravity_filter_hz: 0.05
+
+fusion:
+  process_noise: 0.8
+  gps_position_std_m: 4.0
+  gps_velocity_std_mps: 1.2
+  reorder_window_s: 0.3
+  max_gps_gap_s: 3.0
+
+pipeline:
+  buffer_seconds: 60.0
+  queue_size: 2048
+  output_rate_hz: 50.0
+
+storage:
+  enabled: false          # set true once InfluxDB is reachable
+  url: http://localhost:8086
+  token: ""
+  org: apex
+  bucket: telemetry
+  measurement: helmet_telemetry
+  batch_size: 500
+  flush_interval_s: 5.0
+  spool_dir: data/spool
+  max_spool_mb: 256.0
+
+streaming:
+  enabled: true
+  rate_hz: 10.0           # downsampled for the browser
+  max_clients: 8
+
+dashboard:
+  enabled: true
+  host: 0.0.0.0
+  port: 8000
+
+safety:
+  enabled: true
+  crash_g_threshold: 4.0
+  speed_drop_kmh: 20.0
+  speed_lookback_s: 2.0
+  stillness_window_s: 3.0
+  stillness_g_tolerance: 0.35
+  sos_countdown_s: 30.0
+  sos_webhook_url: ""
+  emergency_contact: ""
+  led:
+    enabled: false        # requires GPIO, Pi only
+    red_pin: 17
+    yellow_pin: 27
+    green_pin: 22
+
+voice:
+  enabled: false
+  wake_words: ["apex", "hey apex"]
+  vosk_model_path: models/vosk-model-small-en-us-0.15
+  piper_model_path: models/en_US-amy-low.onnx
+  command_timeout_s: 6.0
+  endpoint_silence_s: 0.8
+  tts_output_device: ""
+  speak_responses: true

@@ -7,6 +7,18 @@ env/
 __pycache__/
 *.py[cod]
 *.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Runtime data: ride logs, Influx spool, recordings
+data/
+
+# Offline speech models (hundreds of MB, fetched by scripts/fetch_models.sh)
+models/
+
+# Local secrets
+.env
 
 # macOS
 .DS_Store

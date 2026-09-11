@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>APEX telemetry</title>
+<link rel="stylesheet" href="/static/style.css">
+<!-- Leaflet is optional. The helmet is frequently offline, so app.js falls
+     back to drawing the track on a canvas when tiles are unreachable. -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <span class="mark">APEX</span>
+    <span id="helmet" class="muted">&mdash;</span>
+  </div>
+  <div class="header-right">
+    <span id="ride" class="muted">—</span>
+    <span id="state" class="pill">starting</span>
+    <span id="link" class="pill link-down">offline</span>
+  </div>
+</header>
+
+<!-- Sits above the gauges and spans the full width: during a countdown this is
+     the only thing on the page that matters. -->
+<div id="alert" class="alert" hidden>
+  <div class="alert-text">
+    <strong id="alertTitle">CRASH DETECTED</strong>
+    <span id="alertDetail" class="small"></span>
+  </div>
+  <button id="alertCancel" type="button">I'm OK &mdash; cancel</button>
+</div>
+
+<main>
+  <section class="panel speed-panel">
+    <svg viewBox="0 0 200 120" class="gauge">
+      <path class="gauge-track" d="M20 110 A 80 80 0 0 1 180 110"></path>
+      <path id="speedArc" class="gauge-fill" d="M20 110 A 80 80 0 0 1 180 110"></path>
+    </svg>
+    <div class="speed-readout">
+      <span id="speed">0</span><small>km/h</small>
+    </div>
+    <div class="speed-sub">
+      <span>max <b id="maxSpeed">0</b> km/h</span>
+      <span><b id="fusion">init</b></span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Lean</h2>
+    <svg viewBox="-60 -50 120 80" class="lean">
+      <line class="horizon" x1="-50" y1="0" x2="50" y2="0"></line>
+      <g id="leanBike">
+        <line class="bike" x1="0" y1="0" x2="0" y2="-38"></line>
+        <circle class="bike-head" cx="0" cy="-42" r="5"></circle>
+      </g>
+    </svg>
+    <div class="metric-value"><span id="lean">0.0</span><small>deg</small></div>
+  </section>
+
+  <section class="panel">
+    <h2>G-force</h2>
+    <svg viewBox="0 0 200 120" class="gauge">
+      <path class="gauge-track" d="M20 110 A 80 80 0 0 1 180 110"></path>
+      <path id="gArc" class="gauge-fill g-fill" d="M20 110 A 80 80 0 0 1 180 110"></path>
+    </svg>
+    <div class="metric-value"><span id="gforce">1.00</span><small>g</small></div>
+    <div class="speed-sub"><span>peak <b id="maxG">0.00</b> g</span></div>
+  </section>
+
+  <section class="panel wide">
+    <h2>Position</h2>
+    <div id="map"></div>
+    <canvas id="trackCanvas" hidden></canvas>
+    <p id="mapNote" class="muted small"></p>
+  </section>
+
+  <section class="panel stats">
+    <h2>Ride</h2>
+    <dl>
+      <dt>Distance</dt><dd><span id="distance">0.000</span> km</dd>
+      <dt>Gradient</dt><dd><span id="gradient">0.0</span> %</dd>
+      <dt>Altitude</dt><dd><span id="altitude">0</span> m</dd>
+      <dt>Heading</dt><dd><span id="heading">0</span>&deg;</dd>
+      <dt>Longitudinal</dt><dd><span id="longAccel">0.00</span> m/s&sup2;</dd>
+      <dt>Satellites</dt><dd><span id="sats">0</span></dd>
+      <dt>Position conf.</dt><dd><span id="posConf">0</span> %</dd>
+      <dt>Coordinates</dt><dd class="mono"><span id="coords">—</span></dd>
+    </dl>
+  </section>
+</main>
+
+<footer>
+  <span id="diag" class="muted small">waiting for telemetry…</span>
+</footer>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" onerror="window.__leafletFailed=true"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
