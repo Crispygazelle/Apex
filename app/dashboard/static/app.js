@@ -25,6 +25,8 @@ const ui = {
   heading: el('heading'), longAccel: el('longAccel'), sats: el('sats'),
   posConf: el('posConf'), coords: el('coords'), diag: el('diag'),
   mapNote: el('mapNote'), map: el('map'), canvas: el('trackCanvas'),
+  alert: el('alert'), alertTitle: el('alertTitle'), alertDetail: el('alertDetail'),
+  alertCancel: el('alertCancel'),
 };
 
 let track = [];
@@ -33,6 +35,7 @@ let trackLine = null;
 let marker = null;
 let followRider = true;
 let framesReceived = 0;
+let countdownTimer = null;
 
 /* ---------- gauges ---------- */
 
@@ -207,6 +210,72 @@ function render(s) {
     `${framesReceived} frames · ${track.length} track points · fusion ${fusion}`;
 }
 
+/* ---------- crash and SOS ---------- */
+
+/* The banner counts down locally rather than waiting for server frames. The
+ * server is authoritative about whether the SOS fires; the client only has to
+ * show a number that ticks, and a number that jumps in 100 ms steps as frames
+ * arrive reads as broken at exactly the moment the rider needs to trust it. */
+function showAlert(sos, event) {
+  const state = sos.state;
+
+  if (state === 'idle' || state === 'cancelled') {
+    hideAlert(state === 'cancelled' ? 'SOS cancelled.' : '');
+    return;
+  }
+
+  ui.alert.hidden = false;
+  ui.alert.className = `alert ${state}`;
+  ui.alertCancel.hidden = state !== 'countdown';
+
+  const detail = event
+    ? `${event.peak_g.toFixed(1)} g · ${event.speed_before_kmh.toFixed(0)} → `
+      + `${event.speed_after_kmh.toFixed(0)} km/h · ${event.reason}`
+    : '';
+  ui.alertDetail.textContent = detail;
+
+  clearInterval(countdownTimer);
+  if (state === 'countdown') {
+    let remaining = sos.remaining_s;
+    const tick = () => {
+      ui.alertTitle.textContent =
+        `CRASH DETECTED — sending SOS in ${Math.max(0, remaining).toFixed(0)}s`;
+      remaining -= 1;
+      if (remaining < -1) clearInterval(countdownTimer);
+    };
+    tick();
+    countdownTimer = setInterval(tick, 1000);
+  } else {
+    const titles = {
+      dispatching: 'SENDING SOS…',
+      sent: 'SOS SENT — help has been notified',
+      failed: 'SOS FAILED TO SEND — call for help manually',
+    };
+    ui.alertTitle.textContent = titles[state] || `SOS ${state}`;
+  }
+}
+
+function hideAlert(note) {
+  clearInterval(countdownTimer);
+  ui.alert.hidden = true;
+  if (note) ui.diag.textContent = note;
+}
+
+async function cancelSos() {
+  ui.alertCancel.disabled = true;
+  try {
+    const response = await fetch('/api/sos/cancel', { method: 'POST' });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      ui.alertDetail.textContent = body.detail || 'Cancel was refused.';
+    }
+  } catch (err) {
+    ui.alertDetail.textContent = `Cancel failed: ${err}`;
+  } finally {
+    ui.alertCancel.disabled = false;
+  }
+}
+
 /* ---------- transport ---------- */
 
 function setLink(up) {
@@ -229,7 +298,11 @@ function connect() {
 
   socket.onmessage = (event) => {
     try {
-      render(JSON.parse(event.data));
+      const message = JSON.parse(event.data);
+      // Telemetry frames are bare samples; anything with a `type` is an alert
+      // published outside the rate throttle.
+      if (message.type) showAlert(message.sos, message.event);
+      else render(message);
     } catch (err) {
       console.error('bad telemetry frame', err);
     }
@@ -267,10 +340,24 @@ async function loadIdentity() {
   } catch { /* the dashboard still works without it */ }
 }
 
+async function loadSos() {
+  // A page opened or reloaded mid-countdown must show the banner immediately,
+  // not wait for the next state change that may never come.
+  try {
+    const response = await fetch('/api/sos');
+    if (!response.ok) return;
+    const sos = await response.json();
+    if (sos.enabled && sos.state !== 'idle') showAlert(sos, sos.event);
+  } catch { /* the safety layer may be disabled */ }
+}
+
 window.addEventListener('resize', () => {
   if (!ui.canvas.hidden) drawCanvasTrack();
 });
 
+ui.alertCancel.addEventListener('click', cancelSos);
+
 initMap();
 loadIdentity();
+loadSos();
 loadHistory().then(connect);

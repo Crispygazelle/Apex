@@ -25,6 +25,8 @@ from typing import Any
 from app.config import AppConfig, load_config
 from app.models import RideSample
 from app.pipeline.coordinator import Coordinator
+from app.safety.monitor import SafetyMonitor
+from app.sensors.simulated import RideProfile, RideSimulator
 from app.storage.batch_writer import BatchWriter
 from app.storage.influxdb import InfluxWriter
 from app.streaming.websocket import TelemetryHub
@@ -49,6 +51,16 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="stop after this many seconds (default: run until interrupted)",
+    )
+    parser.add_argument(
+        "--simulate-crash",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help=(
+            "script a crash this many seconds into a simulated ride, to rehearse "
+            "detection and the SOS path without crashing a motorcycle"
+        ),
     )
     parser.add_argument("--quiet", action="store_true", help="hide the live telemetry line")
     parser.add_argument("--log-level", default=None, help="override node.log_level")
@@ -138,14 +150,18 @@ class ApexNode:
     coordinator: Coordinator
     hub: TelemetryHub | None = None
     batch_writer: BatchWriter | None = None
+    safety: SafetyMonitor | None = None
     reporter: ConsoleReporter | None = None
     _server_task: asyncio.Task[None] | None = field(default=None, init=False)
     _server: Any = field(default=None, init=False)
 
     async def start_services(self) -> None:
-        """Bring up storage and the dashboard before the ride begins."""
+        """Bring up storage, safety, and the dashboard before the ride begins."""
         if self.batch_writer is not None:
             await self.batch_writer.start()
+
+        if self.safety is not None:
+            await self.safety.start()
 
         if self.config.dashboard.enabled and self.hub is not None:
             await self._start_dashboard()
@@ -155,7 +171,7 @@ class ApexNode:
 
         from app.dashboard.app import create_app
 
-        app = create_app(self.coordinator, self.hub, self.batch_writer)
+        app = create_app(self.coordinator, self.hub, self.batch_writer, self.safety)
         server_config = uvicorn.Config(
             app,
             host=self.config.dashboard.host,
@@ -184,6 +200,11 @@ class ApexNode:
             self._server_task = None
             self._server = None
 
+        # Safety stops before storage so a crash recorded on the way out still
+        # has somewhere to be written.
+        if self.safety is not None:
+            await self.safety.stop()
+
         if self.hub is not None:
             await self.hub.close()
 
@@ -196,12 +217,23 @@ class ApexNode:
             payload["streaming"] = self.hub.stats()
         if self.batch_writer is not None:
             payload["storage"] = self.batch_writer.stats.as_dict()
+        if self.safety is not None:
+            payload["safety"] = self.safety.stats()
         return payload
 
 
-def build_node(config: AppConfig, *, quiet: bool = False) -> ApexNode:
+def build_node(
+    config: AppConfig, *, quiet: bool = False, simulate_crash_at: float | None = None
+) -> ApexNode:
     """Wire the coordinator to whichever consumers the config enables."""
-    coordinator = Coordinator(config)
+    simulator = None
+    if simulate_crash_at is not None:
+        if config.node.sensor_backend != "sim":
+            raise SystemExit("--simulate-crash requires --backend sim")
+        simulator = RideSimulator(RideProfile(crash_at_s=simulate_crash_at))
+        logger.warning("Scripted crash at t+%.1fs; this is a rehearsal", simulate_crash_at)
+
+    coordinator = Coordinator(config, simulator=simulator)
     node = ApexNode(config=config, coordinator=coordinator)
 
     if not quiet:
@@ -218,6 +250,13 @@ def build_node(config: AppConfig, *, quiet: bool = False) -> ApexNode:
         node.batch_writer = BatchWriter(config.storage, writer)
         coordinator.subscribe_sample(node.batch_writer.submit)
 
+    if config.safety.enabled:
+        # Subscribes itself in start(), after storage and streaming exist, so a
+        # crash in the first second still has somewhere to be recorded and sent.
+        node.safety = SafetyMonitor(
+            config, coordinator, hub=node.hub, batch_writer=node.batch_writer
+        )
+
     return node
 
 
@@ -225,7 +264,7 @@ async def async_main(args: argparse.Namespace) -> int:
     config = resolve_config(args)
     configure_logging(config.node.log_level)
 
-    node = build_node(config, quiet=args.quiet)
+    node = build_node(config, quiet=args.quiet, simulate_crash_at=args.simulate_crash)
     coordinator = node.coordinator
 
     loop = asyncio.get_running_loop()

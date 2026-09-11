@@ -143,3 +143,67 @@ def test_websocket_refuses_clients_beyond_capacity(coordinator: Coordinator) -> 
         assert excinfo.value.code == 1013
 
         assert hub.client_count == 1
+
+
+def test_sos_endpoints_report_disabled_without_a_safety_layer(client: TestClient) -> None:
+    body = client.get("/api/sos").json()
+    assert body["enabled"] is False
+    assert body["state"] == "idle"
+
+    assert client.post("/api/sos/cancel").status_code == 501
+
+
+async def test_cancelling_an_sos_over_http(coordinator: Coordinator, config: AppConfig) -> None:
+    """Driven in-loop rather than through TestClient.
+
+    TestClient runs the app on its own thread, but in production the dashboard
+    shares the fusion loop with the SOS countdown. Exercising it through an
+    in-loop ASGI transport is both closer to the real arrangement and the only
+    way to arm a countdown, which needs a running loop to create its task.
+    """
+    import httpx
+
+    from app.safety.monitor import SafetyMonitor
+    from app.safety.status_led import RecordingLedBackend
+    from tests.test_sos import EVENT, StubNotifier
+
+    config.safety.sos_countdown_s = 30.0
+    notifier = StubNotifier()
+    safety = SafetyMonitor(
+        config,
+        coordinator,
+        notifier=notifier,
+        led_backend=RecordingLedBackend(),
+        retry_backoff_s=0.0,
+    )
+    app = create_app(coordinator, TelemetryHub(), None, safety)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://node") as client:
+        body = (await client.get("/api/sos")).json()
+        assert body["state"] == "idle"
+
+        safety.sos.arm(EVENT)
+        live = (await client.get("/api/sos")).json()
+        assert live["enabled"] is True
+        assert live["state"] == "countdown"
+        assert live["remaining_s"] > 25.0
+        # The banner is rebuilt from this on a page reload.
+        assert live["event"]["peak_g"] == EVENT.peak_g
+
+        cancelled = (await client.post("/api/sos/cancel")).json()
+        assert cancelled["cancelled"] is True
+        await safety.sos.wait()
+
+        # A second cancel has nothing to stop and must say so rather than
+        # reporting a success that did not happen.
+        refused = await client.post("/api/sos/cancel")
+        assert refused.status_code == 409
+        assert "cancel" in refused.json()["detail"].lower()
+
+    assert notifier.calls == []
+
+
+def test_stats_include_the_safety_layer(client: TestClient) -> None:
+    body = client.get("/api/stats").json()
+    assert body["safety"] == {"enabled": False}

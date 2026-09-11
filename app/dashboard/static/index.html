@@ -23,6 +23,16 @@
   </div>
 </header>
 
+<!-- Sits above the gauges and spans the full width: during a countdown this is
+     the only thing on the page that matters. -->
+<div id="alert" class="alert" hidden>
+  <div class="alert-text">
+    <strong id="alertTitle">CRASH DETECTED</strong>
+    <span id="alertDetail" class="small"></span>
+  </div>
+  <button id="alertCancel" type="button">I'm OK &mdash; cancel</button>
+</div>
+
 <main>
   <section class="panel speed-panel">
     <svg viewBox="0 0 200 120" class="gauge">

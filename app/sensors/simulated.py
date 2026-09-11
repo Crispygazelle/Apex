@@ -73,6 +73,17 @@ class RideProfile:
     brake_depth: float = 0.75
     gps_lock_s: float = 6.0
     gps_dropouts: list[tuple[float, float]] = field(default_factory=lambda: [(45.0, 57.0)])
+    # Off by default. Set it to rehearse the crash and SOS path end to end,
+    # which is otherwise only testable by actually crashing a motorcycle.
+    crash_at_s: float | None = None
+    crash_peak_g: float = 8.0
+
+
+# A crash is three distinct phases, and the detector depends on all three:
+# a violent transient, a period of tumbling, then stillness.
+CRASH_IMPACT_S = 0.12
+CRASH_DECEL_S = 0.45
+CRASH_TUMBLE_S = 1.6
 
 
 class RideSimulator:
@@ -93,6 +104,19 @@ class RideSimulator:
     # --- analytic profile -------------------------------------------------
 
     def speed_at(self, t: float) -> float:
+        since_crash = self.crash_elapsed(t)
+        if since_crash is not None:
+            # The bike stops in under half a second and stays stopped. This is
+            # what gives the detector its speed-drop corroboration, and it is
+            # also what a brake, however hard, cannot reproduce.
+            if since_crash >= CRASH_DECEL_S:
+                return 0.0
+            impact_speed = self._cruise_speed_at(self.profile.crash_at_s or 0.0)
+            return impact_speed * (1.0 - since_crash / CRASH_DECEL_S) ** 2
+
+        return self._cruise_speed_at(t)
+
+    def _cruise_speed_at(self, t: float) -> float:
         p = self.profile
         u = t - p.stationary_s
         if u <= 0.0:
@@ -105,8 +129,18 @@ class RideSimulator:
         brake = 1.0 - p.brake_depth * exp(-z * z)
         return max(0.0, p.cruise_mps * spool * wave * brake)
 
+    def crash_elapsed(self, t: float) -> float | None:
+        """Seconds since the scripted impact, or None if it has not happened."""
+        crash_at = self.profile.crash_at_s
+        if crash_at is None or t < crash_at:
+            return None
+        return t - crash_at
+
     def heading_unwrapped_at(self, t: float) -> float:
         p = self.profile
+        if p.crash_at_s is not None and t >= p.crash_at_s:
+            # A wreck does not keep steering.
+            t = p.crash_at_s
         u = max(0.0, t - p.stationary_s)
         return p.start_heading_deg + p.heading_amplitude_deg * sin(
             2.0 * pi * u / p.heading_period_s
@@ -271,6 +305,15 @@ class SimulatedImu(_SimulatedSensor):
         # hardware, so the simulator produces it too.
         vibration = 0.015 * st.speed_mps
 
+        gx, gy, gz = st.roll_rate_dps, st.pitch_rate_dps, st.yaw_rate_dps
+        impact_x, impact_z, agitation = self._crash_forces(t)
+        ax += impact_x
+        az += impact_z
+        if agitation:
+            gx += self._rng.gauss(0.0, 180.0)
+            gy += self._rng.gauss(0.0, 180.0)
+            gz += self._rng.gauss(0.0, 180.0)
+
         return SensorReading(
             timestamp=self._time(),
             source=SensorSource.IMU,
@@ -278,13 +321,40 @@ class SimulatedImu(_SimulatedSensor):
                 "ax_mps2": self._noisy(ax, self.ACCEL_BIAS[0], self.ACCEL_NOISE + vibration),
                 "ay_mps2": self._noisy(ay, self.ACCEL_BIAS[1], self.ACCEL_NOISE + vibration),
                 "az_mps2": self._noisy(az, self.ACCEL_BIAS[2], self.ACCEL_NOISE + vibration),
-                "gx_dps": self._noisy(st.roll_rate_dps, self.GYRO_BIAS[0], self.GYRO_NOISE),
-                "gy_dps": self._noisy(st.pitch_rate_dps, self.GYRO_BIAS[1], self.GYRO_NOISE),
-                "gz_dps": self._noisy(st.yaw_rate_dps, self.GYRO_BIAS[2], self.GYRO_NOISE),
+                "gx_dps": self._noisy(gx, self.GYRO_BIAS[0], self.GYRO_NOISE),
+                "gy_dps": self._noisy(gy, self.GYRO_BIAS[1], self.GYRO_NOISE),
+                "gz_dps": self._noisy(gz, self.GYRO_BIAS[2], self.GYRO_NOISE),
                 "temperature_c": 31.5 + self._rng.gauss(0.0, 0.1),
             },
             quality=1.0,
         )
+
+    def _crash_forces(self, t: float) -> tuple[float, float, bool]:
+        """Impact transient and tumble, added on top of the normal motion.
+
+        The deceleration implied by `speed_at` alone is only about 3 g, which
+        is not what an impact feels like. A real collision is a short spike an
+        order of magnitude above the average, so it is modelled separately.
+        """
+        since = self.simulator.crash_elapsed(t)
+        if since is None:
+            return 0.0, 0.0, False
+
+        peak = self.simulator.profile.crash_peak_g * GRAVITY
+
+        if since < CRASH_IMPACT_S:
+            # Half-sine impulse: rises and falls inside about a tenth of a
+            # second, which is roughly the duration of a real impact pulse.
+            shape = sin(pi * since / CRASH_IMPACT_S)
+            return -peak * shape, peak * 0.45 * shape, True
+
+        if since < CRASH_TUMBLE_S:
+            # Sliding and tumbling: violent but no longer a single direction.
+            return self._rng.gauss(0.0, 0.7 * GRAVITY), self._rng.gauss(0.0, 0.7 * GRAVITY), True
+
+        # Down and still. The normal formula already yields 1 g on z with the
+        # bike stopped and level, which is exactly what the detector wants.
+        return 0.0, 0.0, False
 
     def _noisy(self, value: float, bias: float, sigma: float) -> float:
         return value + bias + self._rng.gauss(0.0, sigma)

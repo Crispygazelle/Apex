@@ -19,17 +19,20 @@ import contextlib
 import json
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 from app.config import StorageConfig
-from app.models import RideSample
+from app.models import CrashEvent, RideSample
 from app.storage.influxdb import InfluxWriter
 
 logger = logging.getLogger(__name__)
 
 SPOOL_SUFFIX = ".jsonl"
+# Kept out of the replay glob on purpose: crash records are not sample rows and
+# must not be fed back through the telemetry replay path.
+CRASH_LOG_NAME = "crashes.log"
 # Reconnect attempts are spaced so a long outage does not spin the CPU.
 RECONNECT_INTERVAL_S = 30.0
 
@@ -106,6 +109,36 @@ class BatchWriter:
     @property
     def pending(self) -> int:
         return len(self._pending)
+
+    async def record_crash(self, event: CrashEvent) -> bool:
+        """Persist a crash event, to disk always and to InfluxDB if reachable.
+
+        Unlike telemetry, a crash record is written to the card unconditionally
+        rather than only when the database write fails. It is a handful of
+        bytes once in the life of a helmet, and it is the one record that must
+        survive a node that never reconnects and a card pulled from a wreck.
+        """
+        await asyncio.to_thread(self._append_crash_log, event)
+
+        # Flush pending telemetry first so the seconds leading up to the impact
+        # are in the database alongside the event itself.
+        await self.flush()
+
+        written = await asyncio.to_thread(self.writer.write_crash, event)
+        if not written:
+            self.stats.last_error = self.writer.last_error
+            logger.error("Crash event not written to InfluxDB; disk copy retained")
+        return written
+
+    def _append_crash_log(self, event: CrashEvent) -> None:
+        self.spool_dir.mkdir(parents=True, exist_ok=True)
+        path = self.spool_dir / CRASH_LOG_NAME
+        try:
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(asdict(event), separators=(",", ":")))
+                handle.write("\n")
+        except OSError as exc:
+            logger.error("Could not write crash log: %s", exc)
 
     async def _flush_loop(self) -> None:
         interval = max(0.5, self.config.flush_interval_s)

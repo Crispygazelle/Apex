@@ -128,6 +128,43 @@ dl {
 dt { color: var(--muted); font-size: 13px; }
 dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
 
+/* Crash / SOS banner */
+.alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 12px 20px 0;
+  padding: 14px 18px;
+  border-radius: 10px;
+  border: 1px solid var(--bad);
+  background: #2d1214;
+}
+.alert-text { display: flex; flex-direction: column; gap: 4px; }
+.alert strong { font-size: 18px; letter-spacing: 0.02em; color: #ff7b72; }
+.alert .small { color: var(--muted); }
+.alert button {
+  flex: none;
+  padding: 12px 22px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #0b0f14;
+  background: var(--good);
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.alert button:disabled { opacity: 0.6; cursor: default; }
+/* Only the cancellable phase pulses. Once the message is gone, an animation
+   implying something is still happening would be a lie. */
+.alert.countdown { animation: alert-pulse 1s steps(1) infinite; }
+.alert.sent { border-color: var(--good); background: #10231a; }
+.alert.sent strong { color: var(--good); }
+.alert.failed { background: #2d1214; }
+@keyframes alert-pulse {
+  50% { background: #3d181b; }
+}
+
 footer { padding: 12px 20px 24px; border-top: 1px solid var(--border); }
 
 @media (max-width: 720px) {

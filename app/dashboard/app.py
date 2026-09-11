@@ -16,7 +16,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -24,6 +24,7 @@ from app.storage.influxdb import InfluxUnavailableError
 
 if TYPE_CHECKING:
     from app.pipeline.coordinator import Coordinator
+    from app.safety.monitor import SafetyMonitor
     from app.storage.batch_writer import BatchWriter
     from app.streaming.websocket import TelemetryHub
 
@@ -36,6 +37,7 @@ def create_app(
     coordinator: Coordinator,
     hub: TelemetryHub,
     batch_writer: BatchWriter | None = None,
+    safety: SafetyMonitor | None = None,
 ) -> FastAPI:
     """Build the dashboard around an already-running coordinator."""
     app = FastAPI(
@@ -60,6 +62,7 @@ def create_app(
     async def get_stats() -> dict[str, Any]:
         """Pipeline, sensor, streaming, and storage health in one place."""
         payload: dict[str, Any] = {"pipeline": coordinator.stats(), "streaming": hub.stats()}
+        payload["safety"] = safety.stats() if safety is not None else {"enabled": False}
         payload["storage"] = (
             {
                 **batch_writer.stats.as_dict(),
@@ -104,6 +107,39 @@ def create_app(
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
         return {"ride_id": ride_id, "count": len(rows), "samples": rows}
+
+    @app.get("/api/sos")
+    async def get_sos() -> dict[str, Any]:
+        """Current escalation state, so a reloaded page can restore the banner."""
+        if safety is None:
+            return {"enabled": False, "state": "idle", "remaining_s": 0.0}
+        return {"enabled": True, **safety.sos.stats()}
+
+    @app.post("/api/sos/cancel")
+    async def cancel_sos(request: Request) -> dict[str, Any]:
+        """Rider (or pillion) calls off a countdown.
+
+        Returns 409 rather than 200 when the countdown has already expired.
+        Reporting success for a cancel that did nothing would leave whoever
+        pressed the button believing no one is on the way.
+        """
+        if safety is None:
+            raise HTTPException(status_code=501, detail="safety layer is disabled")
+
+        # Calling off an emergency is the most consequential thing this API
+        # does, so who did it goes in the journal. An SOS that was cancelled
+        # and cannot be accounted for afterwards is its own kind of incident.
+        client = request.client.host if request.client else "unknown"
+        agent = request.headers.get("user-agent", "")
+        origin = f"dashboard at {client} ({agent[:80]})" if agent else f"dashboard at {client}"
+        logger.warning("SOS cancel requested by %s", origin)
+
+        if not safety.cancel_sos(origin):
+            raise HTTPException(
+                status_code=409,
+                detail=f"cannot cancel while SOS is {safety.sos.state.value}",
+            )
+        return {"cancelled": True, **safety.sos.stats()}
 
     @app.websocket("/ws/telemetry")
     async def telemetry_socket(websocket: WebSocket) -> None:
