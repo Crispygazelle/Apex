@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from app.safety.monitor import SafetyMonitor
     from app.storage.batch_writer import BatchWriter
     from app.streaming.websocket import TelemetryHub
+    from app.voice.assistant import VoiceAssistant
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ def create_app(
     hub: TelemetryHub,
     batch_writer: BatchWriter | None = None,
     safety: SafetyMonitor | None = None,
+    voice: VoiceAssistant | None = None,
 ) -> FastAPI:
     """Build the dashboard around an already-running coordinator."""
     app = FastAPI(
@@ -63,6 +65,11 @@ def create_app(
         """Pipeline, sensor, streaming, and storage health in one place."""
         payload: dict[str, Any] = {"pipeline": coordinator.stats(), "streaming": hub.stats()}
         payload["safety"] = safety.stats() if safety is not None else {"enabled": False}
+        payload["voice"] = (
+            {"enabled": True, **voice.stats.as_dict()}
+            if voice is not None
+            else {"enabled": False}
+        )
         payload["storage"] = (
             {
                 **batch_writer.stats.as_dict(),

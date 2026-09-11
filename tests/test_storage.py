@@ -45,6 +45,12 @@ class FakeInflux:
         self.written_rows.extend(rows)
         return True
 
+    def write_hazard(self, hazard: Any) -> bool:
+        if not self.reachable:
+            return False
+        self.written.append(hazard)  # type: ignore[arg-type]
+        return True
+
     def close(self) -> None:
         self.closed = True
 
@@ -258,3 +264,25 @@ def test_a_missing_spool_file_reads_as_empty(tmp_path: Path) -> None:
 def test_timestamps_convert_to_integer_nanoseconds() -> None:
     assert _to_nanos(1.5) == 1_500_000_000
     assert isinstance(_to_nanos(1789161771.78972), int)
+
+
+async def test_a_hazard_is_written_to_disk_even_without_influx(
+    storage_config: StorageConfig,
+) -> None:
+    from app.models import HazardReport
+    from app.storage.batch_writer import HAZARD_LOG_NAME
+
+    influx = FakeInflux(reachable=False)
+    writer = BatchWriter(storage_config, influx)
+    hazard = HazardReport(
+        timestamp=1.0,
+        ride_id="ride-1",
+        hazard_type="pothole",
+        latitude=12.9,
+        longitude=77.6,
+    )
+
+    assert await writer.record_hazard(hazard) is False
+    log = Path(storage_config.spool_dir) / HAZARD_LOG_NAME
+    assert log.exists()
+    assert "pothole" in log.read_text()

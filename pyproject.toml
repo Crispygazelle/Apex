@@ -30,7 +30,8 @@ pi = [
 ]
 # Offline speech. Kept separate because the models are large.
 voice = [
-    "vosk>=0.3.45",
+    # 0.3.45 is not on PyPI; 0.3.44 is the current wheel for macOS and aarch64.
+    "vosk>=0.3.44",
     "piper-tts>=1.2",
 ]
 dev = [

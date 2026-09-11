@@ -207,3 +207,4 @@ async def test_cancelling_an_sos_over_http(coordinator: Coordinator, config: App
 def test_stats_include_the_safety_layer(client: TestClient) -> None:
     body = client.get("/api/stats").json()
     assert body["safety"] == {"enabled": False}
+    assert body["voice"] == {"enabled": False}
