@@ -71,8 +71,12 @@ class CalibrationConfig:
     gyro_bias_dps: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
     accel_scale: list[float] = field(default_factory=lambda: [1.0, 1.0, 1.0])
     gravity_mps2: float = 9.80665
-    # Low-pass cutoff for separating gravity from rider acceleration.
-    gravity_filter_hz: float = 0.5
+    # Low-pass cutoff separating gravity from rider acceleration. This must be
+    # far below the frequency of real riding: at 0.5 Hz the filter's time
+    # constant is 0.32 s, so it follows a braking event and reports the braking
+    # as a change in gravity. 0.05 Hz gives a 3.2 s constant, which passes
+    # acceleration and absorbs only slow attitude changes such as a long climb.
+    gravity_filter_hz: float = 0.05
 
 
 @dataclass

@@ -8,11 +8,11 @@ mutable state would be a race waiting to happen.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class SensorSource(str, Enum):
+class SensorSource(StrEnum):
     """Origin of a reading. Values double as InfluxDB tag values."""
 
     IMU = "imu"
@@ -20,7 +20,7 @@ class SensorSource(str, Enum):
     MIC = "mic"
 
 
-class FusionMode(str, Enum):
+class FusionMode(StrEnum):
     """How the estimator arrived at the current state."""
 
     INIT = "init"
@@ -28,7 +28,7 @@ class FusionMode(str, Enum):
     FUSED = "fused"
 
 
-class SystemState(str, Enum):
+class SystemState(StrEnum):
     """Top-level node state. Drives the status LED and voice gating."""
 
     STARTING = "starting"

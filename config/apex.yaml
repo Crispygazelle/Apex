@@ -43,7 +43,9 @@ calibration:
   gyro_bias_dps: [0.0, 0.0, 0.0]
   accel_scale: [1.0, 1.0, 1.0]
   gravity_mps2: 9.80665
-  gravity_filter_hz: 0.5
+  # Must sit well below real riding dynamics. Raising this makes the gravity
+  # estimate chase rider acceleration and swallow braking events.
+  gravity_filter_hz: 0.05
 
 fusion:
   process_noise: 0.8
