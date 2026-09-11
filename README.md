@@ -1,348 +1,180 @@
-# 🏍️ APEX: F1-Style Smart Helmet Edge Node
+# APEX
 
-An intelligent, privacy-first, edge-computing telemetry and hands-free vocal assistant module for motorcycle helmets. Real-time kinematics tracking, crash detection, and offline NLP—no cloud dependency required.
+Edge telemetry and a hands-free voice assistant for a motorcycle helmet, running on a Raspberry Pi Zero 2 W.
 
-![Python](https://img.shields.io/badge/Python-3.10+-blue)
-![Raspberry Pi](https://img.shields.io/badge/Raspberry%20Pi-Zero%202%20W-red)
-![License](https://img.shields.io/badge/License-MIT-green)
+One process. An asyncio loop owns fusion, the dashboard, storage, safety and voice. Each sensor sits on its own blocking thread and hands frozen readings across. Develop on a Mac against simulated sensors; deploy the same tree to the Pi for hardware.
 
----
-
-## 🎯 Project Objective
-
-APEX transforms motorcycle helmets into autonomous edge nodes that:
-
-- **Process sensor data locally** – No cloud dependency, zero latency, complete privacy
-- **Deliver hands-free voice assistance** – Navigate, accept orders, and log hazards without visual distraction
-- **Track high-resolution kinematics** – Velocity, acceleration, lean angles, climbing gradients
-- **Detect crashes automatically** – Multi-sensor fusion with emergency distress signaling
-- **Enable crowdsourced hazard mapping** – GPS-tagged infrastructure issues for fleet routing optimization
+Python **3.11**. Raspberry Pi OS Bookworm ships 3.11. Vosk and Piper wheels are unreliable on 3.14.
 
 ---
 
-## 🎯 Real-World Applications
+## What it actually does
 
-### 🚴 Hyperlocal Delivery & Logistics
-- **Target:** Zomato, Swiggy, Zepto, Dunzo, Porter delivery fleets
-- **Use Case:** Hands-free order acceptance, navigation, and drop confirmation
-- **Safety Benefit:** Crowdsourced pothole/hazard mapping for intelligent fleet rerouting
-
-### ⚡ Premium EV OEMs & Fleet Managers
-- **Target:** Ather Energy, Ola Electric, Bounce Infinity, Yulu
-- **Use Case:** High-resolution kinetic profiling for regeneration optimization and cell-degradation prediction
-- **Benefit:** Decentralized testing environment for algorithm development
-
-### 🏔️ Endurance Motovlogging & Long-Distance Touring
-- **Target:** Leisure touring motorcyclists on high-risk corridors (Leh-Ladakh, Spiti Valley)
-- **Use Case:** Continuous safety monitoring with crash detection
-- **Benefit:** Automated emergency distress signals with precise GPS coordinates
+- **Fusion.** MPU6050 at 100 Hz and NEO-M8N at 10 Hz go through a 4-state constant-velocity Kalman filter in a local ENU frame. IMU acceleration is the control input. GPS is a full-matrix update with Joseph-form covariance and 4σ innovation gating. During a GPS blackout the filter dead-reckons.
+- **Metrics.** Speed, g-force, lean (gyro roll corrected by `tan(lean) = v·ω/g` — an accelerometer cannot see lean in a coordinated turn), gradient, odometer from *filtered* speed (summing raw fixes is the GPS odometer bug).
+- **Dashboard.** FastAPI on port 8000: SVG gauges, lean icon, Leaflet map with a canvas fallback, live WebSocket. Not Streamlit.
+- **Storage.** InfluxDB v2 when reachable. Otherwise a size-bounded JSONL spool on the card, replayed on reconnect. Crash and hazard records are written to the card unconditionally.
+- **Crash / SOS.** A 4 g spike is only the trigger. Confirmation needs a speed drop (absolute or proportional) and a still helmet. Then a 30 s cancellable countdown and a webhook payload. A spoken "emergency" cannot fire SOS on its own.
+- **Voice.** Wake word → Vosk → a small phrase list → Piper. Raw PCM is dropped after transcription. Crash state seizes the session: cancel works without the wake word.
 
 ---
 
-## 🛠️ Hardware Bill of Materials (BOM)
+## Hardware
 
-| Component | Model | Function | Interface |
-|-----------|-------|----------|-----------|
-| **Compute Core** | Raspberry Pi Zero 2 W | Edge orchestration, NLP, cloud sync | GPIO, I2C, UART, I2S |
-| **Kinetic Sensor** | MPU6050 (6-Axis IMU) | G-force, acceleration, lean angles | I2C |
-| **Spatial Sensor** | NEO-M8N GPS Module | Latitude, longitude, altitude, velocity | UART (NMEA) |
-| **Acoustic Input** | INMP441 I2S MEMS Microphone | Hands-free voice commands | I2S |
-| **Power Supply** | 18650 Li-ion + TP4056 | 3.7V → 5V regulated output | USB |
-| **Enclosure** | Custom 3D-Printed ABS | Weatherproof, aerodynamic, camera-mount compatible | N/A |
+| Part | Role | Bus |
+|---|---|---|
+| Raspberry Pi Zero 2 W | Quad-core Cortex-A53 @ 1 GHz, **512 MB RAM** | — |
+| MPU6050 | 6-axis IMU | I2C `0x68` |
+| NEO-M8N | GNSS | UART `/dev/ttyAMA0` 9600 |
+| INMP441 | I2S MEMS mic | I2S |
+| 18650 + TP4056 | 5 V to the Pi | USB / GPIO |
 
----
+The Zero 2 W is not "ARMv7 dual-core". The extra cores are why the threaded design fits; 512 MB is the ceiling once Vosk is loaded.
 
-## 💻 Software Stack
-
-- **Language:** Python 3.10+
-- **Edge Inference:** scikit-learn, CRFsuite (ARMv7-optimized)
-- **Cloud API:** FastAPI with async worker pools
-- **Database:** PostgreSQL (cloud) + Influxdb (edge fallback)
-- **Visualization:** Streamlit dashboards + Grafana (local) + Leaflet.js (offline maps)
-- **NLP:** Vosk (offline STT) + Piper TTS (offline speech synthesis)
-- **Sensor Fusion:** Kalman Filter for IMU + GPS merge
-
----
-
-## 📊 Core Technical Features
-
-### High-Resolution Kinematics Tracking
-```
-Instantaneous Velocity (v):  GPS-based Haversine formula between successive coordinates
-Longitudinal Acceleration:   a = Δv / Δt (MPU6050 I2C @ 100Hz)
-Climbing Gradient (%):       g = (Δaltitude / Δdistance) × 100
-Lean Angle:                  Gyroscope roll integration
-```
-
-### Sensor Fusion Engine
-- **Kalman Filter:** Merges fast IMU data (100Hz) with accurate GPS (10Hz)
-- **Dead Reckoning:** Predicts position during GPS outages
-- **Anomaly Detection:** Cross-references sudden G-force spikes with velocity drops to classify crashes
-
-### Offline NLP Pipeline
-1. **Wake-Word Detection** – Low-power acoustic model ignores wind noise
-2. **Speech-to-Text** – Vosk offline engine transcribes audio instantly
-3. **Intent Extraction** – CRF/HMM tokenizer identifies commands (e.g., "Log hazard: pothole")
-4. **Text-to-Speech** – Piper TTS synthesizes verbal responses
-5. **Privacy-First:** Raw audio deleted immediately after processing
-
-### Crash Detection & Emergency Protocol
-- **Passive Override State:** Halts voice pipeline on impact > 4G force
-- **Emergency Trigger:** Automated distress signal with GPS coordinates
-- **Local-First:** Functions even without cellular connectivity
-
----
-
-## 📁 Project Structure
+### Wiring
 
 ```
-apex/
-├── mpu.py                 # MPU6050 IMU driver (6-axis kinetics)
-├── read_gps.py            # NEO-M8N GPS NMEA parser
-├── traffic_light.py       # Status indicator & state machine
-├── daemon.py              # Main async sensor fusion loop
-├── npl_intent_parser.py   # Offline voice command processor
-├── kalman.py              # Sensor fusion algorithm
-├── requirements.txt       # Python dependencies
-├── venv/                  # Virtual environment
-├── config.json            # Sensor calibration & thresholds
-├── data/                  # Local SQLite buffers & logs
-└── README.md              # This file
+MPU6050     VCC→3V3  GND→GND  SDA→GPIO2  SCL→GPIO3
+NEO-M8N     VCC→5V   GND→GND  TX→GPIO15  RX→GPIO14
+INMP441     VCC→3V3  GND→GND  SCK→GPIO18  WS→GPIO19  SD→GPIO20
 ```
 
 ---
 
-## 🚀 Getting Started
+## Laptop (no hardware)
 
-### 1. **Clone the Repository**
+Needs Python 3.11.
+
 ```bash
-git clone https://github.com/Crispygazelle/apex.git
-cd apex
+git clone https://github.com/Crispygazelle/Apex.git
+cd Apex
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
 ```
 
-### 2. **Set Up Virtual Environment**
 ```bash
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+python -m app.main --duration 30          # simulated ride, console line
+python -m app.main --dashboard            # http://127.0.0.1:8000
+python -m app.main --simulate-crash 20    # rehearse SOS without a wreck
+pytest
 ```
 
-### 3. **Install Dependencies**
+Voice extras and models (optional on a Mac):
+
 ```bash
-pip install -r requirements.txt
+pip install -e ".[voice]"
+bash scripts/fetch_models.sh
+python -m app.main --voice --dashboard
 ```
 
-### 4. **Hardware Setup (Raspberry Pi)**
+Say **hey apex what's my speed**, **hey apex log hazard pothole**, **hey apex status report**. During a countdown, **cancel** / **I'm okay** — no wake word.
 
-**Wiring Reference:**
-```
-MPU6050 (I2C):
-  - VCC → Pi 3.3V (Pin 1)
-  - GND → Pi GND (Pin 6)
-  - SDA → Pi GPIO 2 (Pin 3)
-  - SCL → Pi GPIO 3 (Pin 5)
+---
 
-NEO-M8N (UART):
-  - VCC → Pi 5V (Pin 2)
-  - GND → Pi GND (Pin 6)
-  - TX → Pi RX (GPIO 15, Pin 10)
-  - RX → Pi TX (GPIO 14, Pin 8)
+## Raspberry Pi
 
-INMP441 (I2S):
-  - VCC → Pi 3.3V
-  - GND → Pi GND
-  - CLK → Pi GPIO 18
-  - WS  → Pi GPIO 19
-  - SD  → Pi GPIO 20
-
-TP4056 (Power):
-  - Input: USB 5V
-  - Output: 5V to Pi GPIO power header
-```
-
-### 5. **Enable I2C, UART, and I2S on Raspberry Pi**
 ```bash
-sudo raspi-config
-# Enable: I2C, Serial (UART), I2S in Interfacing Options
-# Reboot
+sudo ./deploy/pi-setup.sh
 sudo reboot
+# after reboot:
+i2cdetect -y 1                 # 0x68
+timeout 3 cat /dev/ttyAMA0     # $GPRMC / $GNGGA
+arecord -l                     # I2S capture device
+sudo systemctl start apex
+journalctl -u apex -f
 ```
 
-### 6. **Run the System**
+`deploy/pi-setup.sh` enables I2C / UART / I2S, installs `/opt/apex` with `.[pi,voice]`, fetches models, and enables `deploy/apex.service`. Secrets go in `/etc/apex/apex.env` (see `deploy/apex.env.example`). Boot overlays are in `deploy/boot-config.fragment`.
+
+Manual run on the Pi:
+
 ```bash
-python3 daemon.py
+python -m app.main --backend hardware --dashboard
 ```
 
 ---
 
-## 📖 Usage Guide
+## Voice commands
 
-### Voice Commands (Hands-Free)
-Once running, the system listens for voice triggers:
+| You say | It does |
+|---|---|
+| hey apex what's my speed | Reads fused speed |
+| hey apex status report | Speed, g, heading, distance |
+| hey apex where am I | Lat/lon if the fix is valid |
+| hey apex log hazard pothole | GPS-tagged hazard, disk + Influx if up |
+| cancel / I'm okay | Stops an SOS countdown (no wake word) |
 
-```
-"What's my speed?"           → Fetches current velocity
-"Log hazard: pothole"        → Marks GPS coordinate with hazard type
-"Status report"              → Reads back vital metrics (speed, G-force, altitude)
-"Emergency"                  → Triggers SOS protocol
-```
+"emergency" is **not** an SOS trigger. Wind-garbled STT is not a reason to page anyone. The detector arms the countdown; voice only cancels it.
 
-### Real-Time Dashboard
-Access live telemetry via Streamlit:
-```bash
-streamlit run dashboard.py
-```
-
-The dashboard displays:
-- 🗺️ Live GPS tracking on offline map
-- 📊 Speedometer & G-force gauges
-- 📝 Voice command log with timestamps
-- 🚨 Hazard markers and crash alerts
-
-### Data Export
-Post-ride data is available in:
-- `data/telemetry.db` – Influx database (local edge storage)
-- `data/telemetry.csv` – CSV export for post-processing
+This is a phrase list, not a CRF/HMM tokenizer. A visor-down rider has about ten things to say.
 
 ---
 
-## 🔧 Core Modules
+## Accuracy (synthetic 90 s ride)
 
-### `mpu.py`
-Initializes and reads 6-axis IMU data (acceleration, gyroscope).
-```python
-from mpu import MPU6050
-imu = MPU6050()
-accel_x, accel_y, accel_z = imu.read_acceleration()
-gyro_x, gyro_y, gyro_z = imu.read_gyroscope()
-```
+Ground truth comes from one `RideSimulator`. Both fake sensors report noisy views of the same trajectory, so these numbers are real error bounds, not "a sample came out".
 
-### `read_gps.py`
-Parses NMEA strings from NEO-M8N and extracts coordinates.
-```python
-from read_gps import GPSModule
-gps = GPSModule()
-lat, lon, altitude, velocity = gps.get_position()
-```
+Measured with `python -m scripts.measure_performance`:
 
+| Measure | Result |
+|---|---|
+| Fused position | 0.55 m mean, 1.14 m p95, 3.39 m max |
+| Dead reckoning, 12 s blackout | 27.6 m mean, 63.4 m max |
+| Speed | 0.57 m/s mean error |
+| Lean | 0.15° mean error |
+| Peak RSS (offline, no Vosk) | 41 MB |
+| Battery | **unmeasured** |
+
+Run it on the Pi after install if you want RSS and wall time on 512 MB. Do not quote a battery figure until a real 18650 has done a real ride.
 
 ---
 
-## 🔐 Privacy & Security
+## Configuration
 
-✅ **Zero Cloud Dependency:** All processing happens on the edge device  
-✅ **Local-Only Storage:** Telemetry buffered in SQLite, synced post-ride only  
-✅ **Audio Privacy:** Raw audio deleted immediately after STT processing  
-✅ **No GPS Stalking:** Location data retained locally unless user explicitly syncs  
-✅ **Encrypted Sync:** Optional HTTPS/SSL for cloud offload (fully optional)
-
----
-
-## ⚡ Performance Specs
-
-| Metric | Value |
-|--------|-------|
-| **Sensor Loop Frequency** | 100Hz (IMU), 10Hz (GPS), Continuous (Audio) |
-| **Latency (Voice → Response)** | <500ms (offline NLP) |
-| **Battery Life** | 6–8 hours (18650 @ 2000mAh continuous use) |
-| **Storage (Edge)** | 32GB microSD (local Influxdb buffers) |
-| **Network Dependency** | Optional (fallback to local buffering) |
-| **Processing Power** | Raspberry Pi Zero 2 W (ARMv7 1.0GHz dual-core) |
-
----
-
-## 📡 System Architecture Layers
+`config/apex.yaml` plus environment overlays:
 
 ```
-┌─────────────────────────────────────────┐
-│   Layer 4: Frontend (Streamlit / Mobile) │  (Optional: Real-time dashboard)
-└──────────────────┬──────────────────────┘
-                   │
-┌──────────────────▼──────────────────────┐
-│ Layer 3: Acoustic NLP (Vosk + Piper TTS) │  (Hands-free voice interface)
-└──────────────────┬──────────────────────┘
-                   │
-┌──────────────────▼──────────────────────┐
-│ Layer 2: Edge Compute (Raspberry Pi)     │  (Kalman Filter, Intent Parser, Buffering)
-├──────────────────────────────────────────┤
-│  ├─ Sensor Fusion Engine                 │
-│  ├─ SQLite Time-Series Database          │
-│  ├─ WiFi / Cellular Sync Manager         │
-│  └─ Crash Detection Logic                │
-└──────────────────┬──────────────────────┘
-                   │
-┌──────────────────▼──────────────────────┐
-│ Layer 1: Hardware Sensors (I2C/UART/I2S)│  (MPU6050, NEO-M8N, INMP441)
-└──────────────────────────────────────────┘
+APEX__NODE__SENSOR_BACKEND=hardware
+APEX__STORAGE__TOKEN=...
+APEX__VOICE__ENABLED=true
 ```
 
 ---
 
-## 🐛 Troubleshooting
+## Layout
 
-### GPS Not Acquiring Lock
-- Ensure antenna is outdoors with clear sky view
-- Check UART baud rate (default: 9600)
-- Verify `read_gps.py` is reading NMEA strings
-
-### IMU Data Noisy
-- Run calibration routine in `mpu.py`
-- Ensure secure I2C connection (no loose wires)
-- Reduce sensor polling rate if necessary
-
-### Voice Commands Not Recognized
-- Check microphone wiring (I2S clock, data lines)
-- Verify Vosk models are installed
-- Test audio capture: `arecord -D hw:0,0 -d 5 test.wav`
-
-### Battery Draining Fast
-- Reduce IMU polling frequency to 50Hz
-- Disable Streamlit dashboard (use offline only)
-- Check for blocking I/O operations in `daemon.py`
+```
+app/
+  config.py models.py clock.py geo.py main.py
+  sensors/          MPU6050, NEO-M8N, INMP441 + simulated
+  processing/       calibration, sync, Kalman, metrics
+  pipeline/         acquisition, processor, buffer, coordinator
+  storage/          InfluxDB + disk spool
+  streaming/        WebSocket hub
+  dashboard/        FastAPI + static gauges/map
+  safety/           crash, SOS, status LED
+  voice/            wake word, STT, intent, TTS, commands
+config/apex.yaml
+deploy/             systemd unit, Pi setup, boot overlay
+scripts/            fetch_models.sh, measure_performance.py
+tests/
+```
 
 ---
 
-## 📚 References & Resources
+## Roadmap (not built)
 
-- [Raspberry Pi I2C Setup](https://www.raspberrypi.com/documentation/computers/computers-and-raspberry-pi/linux/i2c.html)
-- [MPU6050 Datasheet](https://invensense.tdk.com/products/motion-tracking/6-axis/mpu-6050/)
-- [NEO-M8N GPS Module](https://www.u-blox.com/en/product/neo-m8-series)
-- [Vosk Offline Speech Recognition](https://alphacephei.com/vosk/)
-- [Kalman Filter Sensor Fusion](https://en.wikipedia.org/wiki/Kalman_filter)
+- Battery characterisation on the 18650 pack
+- Cellular path for SOS when Wi-Fi is gone
+- Fleet-side hazard aggregation
+- Rider-behaviour models
+- Mobile app
 
----
-
-## 🤝 Contributing
-
-Contributions welcome! Areas for enhancement:
-- [ ] Expand NLP command set
-- [ ] Optimize Kalman Filter parameters
-- [ ] Add crash detection ML model
-- [ ] Implement cloud sync via FastAPI
-- [ ] Create mobile app (Flutter/React Native)
+Crash detection is a corroborated filter, not an ML classifier. Cloud sync is optional InfluxDB, not PostgreSQL.
 
 ---
 
-## 📄 License
+## License
 
-This project is licensed under the MIT License – see LICENSE file for details.
-
----
-
-## ✉️ Contact & Support
-
-For questions, issues, or feature requests, open a GitHub issue or reach out to the project maintainer.
-
----
-
-## 🚀 Roadmap
-
-- **v1.0** – Core telemetry + voice commands (Current)
-- **v1.1** – Crash detection + emergency protocol
-- **v1.2** – Cloud sync + Streamlit dashboard
-- **v2.0** – Machine learning rider behavior analysis
-- **v2.1** – Fleet hazard mapping aggregation
-
----
-
-**Last Updated:** August 2026  
-**Status:** 🟢 Active Development
+MIT. See the license file if one is present in the repo; otherwise treat it as MIT as declared in `pyproject.toml`.

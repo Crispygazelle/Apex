@@ -1,0 +1,14 @@
+# Append to /boot/firmware/config.txt on Raspberry Pi OS Bookworm
+# (or /boot/config.txt on older images), then reboot.
+#
+# I2C: MPU6050 at 0x68
+dtparam=i2c_arm=on
+# UART: NEO-M8N on /dev/ttyAMA0 at 9600. Disable the serial console first
+# (raspi-config nonint do_serial 2) or this overlay fights getty.
+enable_uart=1
+dtoverlay=disable-bt
+# I2S: INMP441. googlevoicehat is the overlay that actually clocks an
+# I2S MEMS mic on a Zero 2 W without a custom card. Confirm with
+# `arecord -l` after reboot.
+dtparam=i2s=on
+dtoverlay=googlevoicehat-soundcard
