@@ -61,6 +61,10 @@ class Coordinator:
         self.sensor_set: SensorSet = build_sensors(
             config, simulator=simulator, include_mic=include_mic
         )
+        sim = self.sensor_set.simulator
+        if sim is not None and sim.destination is not None:
+            self.processor.destination = sim.destination
+            self.processor.route_length_m = sim.route_length_m
         self.queue: asyncio.Queue[SensorReading] = asyncio.Queue(
             maxsize=max(64, config.pipeline.queue_size)
         )

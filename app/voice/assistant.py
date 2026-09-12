@@ -12,10 +12,11 @@ the transcriber returns.
 
 from __future__ import annotations
 
+import inspect
 import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from app import clock
 from app.config import AppConfig
@@ -105,6 +106,7 @@ class VoiceAssistant:
         self._utterance = _Utterance()
         self._announced_preempt = False
         self._sample_rate = config.sensors.mic.sample_rate
+        self.on_exchange: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None
 
     # --- lifecycle --------------------------------------------------------
 
@@ -275,8 +277,27 @@ class VoiceAssistant:
         self.phase = (
             SessionPhase.PREEMPTED if self.commands.preempted else SessionPhase.IDLE
         )
+        await self._publish_exchange(text, reply, intent)
         await self.speaker.speak(reply)
         return reply
+
+    async def _publish_exchange(self, text: str, reply: str, intent: Any) -> None:
+        if self.on_exchange is None:
+            return
+        sample = self.coordinator.latest
+        payload = {
+            "type": "voice",
+            "timestamp": clock.now(),
+            "rider": text,
+            "apex": reply,
+            "intent": getattr(intent.name, "value", str(intent.name)),
+            "hazard_type": getattr(intent, "hazard_type", ""),
+            "latitude": sample.state.latitude if sample is not None else 0.0,
+            "longitude": sample.state.longitude if sample is not None else 0.0,
+        }
+        result = self.on_exchange(payload)
+        if inspect.isawaitable(result):
+            await result
 
     async def _enter_preempt(self) -> None:
         if self.phase is not SessionPhase.PREEMPTED:

@@ -76,7 +76,14 @@ def test_a_scripted_crash_is_detected_through_the_real_pipeline(
 def test_a_low_speed_crash_is_caught_through_the_real_pipeline(config: AppConfig) -> None:
     """~21 km/h: below the absolute drop threshold, so the proportional rule
     is the only thing standing between the rider and a missed crash."""
-    profile = RideProfile(crash_at_s=LOW_SPEED_CRASH_AT_S, gps_dropouts=[])
+    profile = RideProfile(
+        crash_at_s=LOW_SPEED_CRASH_AT_S,
+        gps_dropouts=[],
+        # Default cruise is ~80 km/h, whose trough is still above the absolute
+        # drop threshold. Pin a slower ride so only the proportional rule can
+        # confirm the impact.
+        cruise_mps=12.0,
+    )
     _, _, events = detect(config, profile, duration_s=55.0)
 
     assert len(events) == 1

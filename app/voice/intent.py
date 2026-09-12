@@ -24,6 +24,7 @@ class IntentName(StrEnum):
     HAZARD = "hazard"
     SOS = "sos"
     CANCEL = "cancel"
+    DESTINATION = "destination"
     UNKNOWN = "unknown"
 
 
@@ -54,6 +55,16 @@ _SPEED = ("what is my speed", "whats my speed", "how fast", "current speed", "sp
 _STATUS = ("status report", "status", "how am i doing", "vitals")
 _LOCATION = ("where am i", "location", "coordinates", "gps")
 _HEADING = ("heading", "which way", "what direction")
+_DESTINATION = (
+    "how far am i to the destination",
+    "how far to the destination",
+    "how far to destination",
+    "how far am i from the destination",
+    "remaining distance",
+    "are we there yet",
+    "eta",
+    "time to destination",
+)
 _DISTANCE = ("how far", "distance", "odometer")
 
 # "log hazard pothole" / "mark a pothole" / "hazard oil spill"
@@ -64,6 +75,23 @@ _HAZARD_PREFIXES = (
     "mark a hazard",
     "report hazard",
     "hazard",
+)
+_LOG_VERBS = ("log", "mark", "report")
+_HAZARD_SKIP = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "here",
+        "ahead",
+        "please",
+        "at",
+        "my",
+        "location",
+        "this",
+        "spot",
+        "hazard",
+    }
 )
 _KNOWN_HAZARDS = (
     "pothole",
@@ -109,6 +137,8 @@ class IntentParser:
             return Intent(IntentName.LOCATION, raw=raw)
         if _starts_with(raw, _HEADING):
             return Intent(IntentName.HEADING, raw=raw)
+        if _starts_with(raw, _DESTINATION):
+            return Intent(IntentName.DESTINATION, raw=raw)
         if _starts_with(raw, _DISTANCE):
             return Intent(IntentName.DISTANCE, raw=raw)
 
@@ -121,17 +151,21 @@ def _starts_with(text: str, phrases: tuple[str, ...]) -> bool:
 
 def _parse_hazard(text: str) -> Intent | None:
     remainder = text
+    matched_prefix = False
     for prefix in _HAZARD_PREFIXES:
         if text == prefix:
             return Intent(IntentName.HAZARD, hazard_type="unspecified", raw=text)
         lead = prefix + " "
         if text.startswith(lead):
             remainder = text[len(lead) :]
+            matched_prefix = True
             break
-    else:
-        # "pothole ahead" without the log-hazard verb still counts; a rider
-        # shouting a noun at the helmet is not writing a sentence.
-        if any(text == name or text.startswith(name + " ") for name in _KNOWN_HAZARDS):
+
+    if not matched_prefix:
+        tokens = text.split()
+        if tokens and tokens[0] in _LOG_VERBS:
+            remainder = " ".join(t for t in tokens[1:] if t not in _HAZARD_SKIP)
+        elif any(text == name or text.startswith(name + " ") for name in _KNOWN_HAZARDS):
             remainder = text
         else:
             return None
@@ -146,4 +180,10 @@ def _parse_hazard(text: str) -> Intent | None:
         if remainder == name or remainder.startswith(name + " "):
             return Intent(IntentName.HAZARD, hazard_type=name, raw=text)
 
-    return Intent(IntentName.HAZARD, hazard_type=remainder or "unspecified", raw=text)
+    if matched_prefix:
+        return Intent(IntentName.HAZARD, hazard_type=remainder or "unspecified", raw=text)
+    if remainder:
+        # "log a pothole here" already matched a known type above; a log-verb
+        # with no recognised noun is not a hazard.
+        return None
+    return None

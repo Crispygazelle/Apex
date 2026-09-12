@@ -87,6 +87,39 @@ async def test_wake_then_command_as_two_turns(config: AppConfig) -> None:
     assert assistant.phase is SessionPhase.IDLE
 
 
+async def test_destination_remaining_is_spoken(config: AppConfig) -> None:
+    assistant, coordinator, _ = make_assistant(config)
+    latest = coordinator.latest
+    coordinator.buffer.append(
+        RideSample(
+            timestamp=latest.timestamp + 1,
+            ride_id=latest.ride_id,
+            state=latest.state,
+            metrics=RideMetrics(
+                speed_kmh=48.0,
+                g_force=1.1,
+                distance_m=1850.0,
+                remaining_m=2300.0,
+                destination_latitude=21.0946,
+                destination_longitude=79.0497,
+            ),
+            system_state=latest.system_state,
+            gps_valid=True,
+            satellites=10,
+        )
+    )
+    reply = await assistant.hear("hey apex how far am I to the destination")
+    assert "2.3" in reply
+    assert "destination" in reply
+
+
+async def test_log_a_pothole_here_marks_the_hazard(config: AppConfig) -> None:
+    assistant, _, _ = make_assistant(config)
+    reply = await assistant.hear("hey apex log a pothole here")
+    assert "pothole" in reply.lower()
+    assert assistant.commands.hazards[0].hazard_type == "pothole"
+
+
 async def test_hazard_is_gps_tagged(config: AppConfig) -> None:
     assistant, coordinator, _ = make_assistant(config)
     reply = await assistant.hear("apex log hazard pothole")

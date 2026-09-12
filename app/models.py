@@ -138,6 +138,9 @@ class RideMetrics:
     distance_m: float = 0.0
     max_speed_kmh: float = 0.0
     max_g_force: float = 0.0
+    remaining_m: float = 0.0
+    destination_latitude: float = 0.0
+    destination_longitude: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,6 +179,9 @@ class RideSample:
             "lateral_accel_mps2": self.metrics.lateral_accel_mps2,
             "gradient_pct": self.metrics.gradient_pct,
             "distance_m": self.metrics.distance_m,
+            "remaining_m": self.metrics.remaining_m,
+            "destination_latitude": self.metrics.destination_latitude,
+            "destination_longitude": self.metrics.destination_longitude,
             "max_speed_kmh": self.metrics.max_speed_kmh,
             "max_g_force": self.metrics.max_g_force,
             "fusion_mode": self.state.mode.value,

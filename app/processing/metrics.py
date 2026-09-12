@@ -62,6 +62,10 @@ class MetricsCalculator:
         self._altitude_window: deque[tuple[float, float]] = deque()
         self._gps_distance_m = 0.0
 
+    @property
+    def distance_m(self) -> float:
+        return self._distance_m
+
     # --- inputs -----------------------------------------------------------
 
     def ingest_imu(self, calibrated: CalibratedImu, speed_mps: float) -> None:
@@ -168,7 +172,14 @@ class MetricsCalculator:
 
     # --- output -----------------------------------------------------------
 
-    def snapshot(self, speed_mps: float) -> RideMetrics:
+    def snapshot(
+        self,
+        speed_mps: float,
+        *,
+        remaining_m: float = 0.0,
+        destination_latitude: float = 0.0,
+        destination_longitude: float = 0.0,
+    ) -> RideMetrics:
         speed_kmh = speed_mps * 3.6
         self._max_speed_kmh = max(self._max_speed_kmh, speed_kmh)
 
@@ -184,6 +195,9 @@ class MetricsCalculator:
             distance_m=self._distance_m,
             max_speed_kmh=self._max_speed_kmh,
             max_g_force=self._max_g_force,
+            remaining_m=remaining_m,
+            destination_latitude=destination_latitude,
+            destination_longitude=destination_longitude,
         )
 
 

@@ -85,6 +85,12 @@ def test_history_step_decimates(client: TestClient) -> None:
     assert sparse == pytest.approx(dense / 10, abs=2)
 
 
+def test_events_endpoint_is_empty_without_a_director(client: TestClient) -> None:
+    body = client.get("/api/events").json()
+    assert body["events"] == []
+    assert body["ride_id"] == "ride-test"
+
+
 @pytest.mark.parametrize("query", ["seconds=0", "seconds=-5", "seconds=9999", "step=0"])
 def test_history_rejects_out_of_range_queries(client: TestClient, query: str) -> None:
     assert client.get(f"/api/history?{query}").status_code == 422

@@ -24,6 +24,7 @@ from app.storage.influxdb import InfluxUnavailableError
 
 if TYPE_CHECKING:
     from app.pipeline.coordinator import Coordinator
+    from app.pipeline.events import EventLog
     from app.safety.monitor import SafetyMonitor
     from app.storage.batch_writer import BatchWriter
     from app.streaming.websocket import TelemetryHub
@@ -40,6 +41,7 @@ def create_app(
     batch_writer: BatchWriter | None = None,
     safety: SafetyMonitor | None = None,
     voice: VoiceAssistant | None = None,
+    event_log: EventLog | None = None,
 ) -> FastAPI:
     """Build the dashboard around an already-running coordinator."""
     app = FastAPI(
@@ -83,7 +85,7 @@ def create_app(
 
     @app.get("/api/history")
     async def get_history(
-        seconds: float = Query(default=60.0, gt=0.0, le=600.0),
+        seconds: float = Query(default=60.0, gt=0.0, le=1800.0),
         step: int = Query(default=1, ge=1, le=100),
     ) -> dict[str, Any]:
         """Recent samples from the ring buffer, for drawing a trace on load.
@@ -97,6 +99,14 @@ def create_app(
             "count": len(window[::step]),
             "buffer_span_s": round(coordinator.buffer.span_seconds(), 2),
             "samples": [sample.to_dict() for sample in window[::step]],
+        }
+
+    @app.get("/api/events")
+    async def get_events() -> dict[str, Any]:
+        """Voice exchanges and threshold events for the current ride."""
+        return {
+            "ride_id": coordinator.ride_id,
+            "events": event_log.as_dicts() if event_log is not None else [],
         }
 
     @app.get("/api/ride/{ride_id}")
@@ -176,6 +186,7 @@ def create_app(
 
     @app.get("/api/health")
     async def health() -> dict[str, Any]:
+        sim = coordinator.simulator
         return {
             "status": "ok",
             "helmet_id": coordinator.config.node.helmet_id,
@@ -183,6 +194,8 @@ def create_app(
             "system_state": coordinator.system_state.value,
             "sensor_backend": coordinator.config.node.sensor_backend,
             "samples": len(coordinator.buffer),
+            "route": sim.profile.route_name if sim is not None else "",
+            "destination": sim.profile.destination_name if sim is not None else "",
         }
 
     if STATIC_DIR.exists():

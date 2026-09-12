@@ -63,6 +63,8 @@ class CommandHandler:
             return self._heading()
         if intent.name is IntentName.DISTANCE:
             return self._distance()
+        if intent.name is IntentName.DESTINATION:
+            return self._destination()
         if intent.name is IntentName.HAZARD:
             return await self._hazard(intent)
         return "I didn't catch that."
@@ -112,6 +114,23 @@ class CommandHandler:
         if km < 1.0:
             return f"{sample.metrics.distance_m:.0f} metres this ride."
         return f"{km:.1f} kilometres this ride."
+
+    def _destination(self) -> str:
+        sample = self._sample()
+        if sample is None:
+            return "I don't have a destination yet."
+        remaining = sample.metrics.remaining_m
+        dest_set = (
+            sample.metrics.destination_latitude != 0.0
+            or sample.metrics.destination_longitude != 0.0
+        )
+        if not dest_set:
+            return "I don't have a destination for this ride."
+        if remaining < 80.0:
+            return "You are at the destination."
+        if remaining < 1000.0:
+            return f"{remaining:.0f} metres to the destination."
+        return f"{remaining / 1000.0:.1f} kilometres to the destination."
 
     async def _hazard(self, intent: Intent) -> str:
         sample = self._sample()
