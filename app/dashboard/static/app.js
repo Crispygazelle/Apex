@@ -12,7 +12,14 @@
 const GAUGE_ARC_LENGTH = 251.3; // length of the 180-degree r=80 arc path
 const SPEED_MAX_KMH = 160;
 const G_MAX = 4;
-const MAX_TRACK_POINTS = 3000;
+const MAX_TRACK_POINTS = 15000;
+const FAST_KMH = 70;
+const BRAKE_MPS2 = -2.8;
+const TRAIL = {
+  fast: '#9b5de5',
+  normal: '#3ecf8e',
+  brake: '#e5484d',
+};
 
 const el = (id) => document.getElementById(id);
 
@@ -21,21 +28,28 @@ const ui = {
   speed: el('speed'), maxSpeed: el('maxSpeed'), speedArc: el('speedArc'),
   fusion: el('fusion'), lean: el('lean'), leanBike: el('leanBike'),
   gforce: el('gforce'), maxG: el('maxG'), gArc: el('gArc'),
-  distance: el('distance'), gradient: el('gradient'), altitude: el('altitude'),
+  distance: el('distance'), remaining: el('remaining'),
+  gradient: el('gradient'), altitude: el('altitude'),
   heading: el('heading'), longAccel: el('longAccel'), sats: el('sats'),
   posConf: el('posConf'), coords: el('coords'), diag: el('diag'),
   mapNote: el('mapNote'), map: el('map'), canvas: el('trackCanvas'),
   alert: el('alert'), alertTitle: el('alertTitle'), alertDetail: el('alertDetail'),
-  alertCancel: el('alertCancel'),
+  alertCancel: el('alertCancel'), rideLog: el('rideLog'),
 };
 
 let track = [];
 let leafletMap = null;
-let trackLine = null;
+let colorLines = [];
+let brakeDots = [];
+let hazardDots = [];
 let marker = null;
+let startMarker = null;
+let destMarker = null;
 let followRider = true;
 let framesReceived = 0;
 let countdownTimer = null;
+let logCount = 0;
+const seenLogKeys = new Set();
 
 /* ---------- gauges ---------- */
 
@@ -51,6 +65,12 @@ function gColour(g) {
   return 'var(--good)';
 }
 
+function trailKind(s) {
+  if (s.longitudinal_accel_mps2 <= BRAKE_MPS2 && s.speed_kmh > 8) return 'brake';
+  if (s.speed_kmh >= FAST_KMH) return 'fast';
+  return 'normal';
+}
+
 /* ---------- map ---------- */
 
 function initMap() {
@@ -60,16 +80,11 @@ function initMap() {
   }
 
   leafletMap = L.map('map', { zoomControl: true, attributionControl: false });
-  // A whole-world view until the first fix arrives. Seeding a specific city
-  // here would hardcode wherever the simulator happens to start and show a
-  // real rider the wrong place until their GPS locks.
   leafletMap.setView([20, 0], 2);
 
   const tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
   });
-  // If no tile loads we are offline: swap to the canvas rather than showing
-  // an empty grey square.
   let tileLoaded = false;
   tiles.on('tileload', () => { tileLoaded = true; });
   tiles.addTo(leafletMap);
@@ -77,12 +92,10 @@ function initMap() {
     if (!tileLoaded) useCanvasFallback('Offline: tiles unreachable, showing local track.');
   }, 4000);
 
-  trackLine = L.polyline([], { color: '#f0883e', weight: 3 }).addTo(leafletMap);
   marker = L.circleMarker([0, 0], {
-    radius: 6, color: '#fff', fillColor: '#f0883e', fillOpacity: 1, weight: 2,
+    radius: 7, color: '#fff', fillColor: '#f0883e', fillOpacity: 1, weight: 2,
   }).addTo(leafletMap);
 
-  // Panning implies the rider wants to look around, so stop recentring.
   leafletMap.on('dragstart', () => { followRider = false; });
 }
 
@@ -92,6 +105,24 @@ function useCanvasFallback(note) {
   ui.canvas.hidden = false;
   ui.mapNote.textContent = note;
   drawCanvasTrack();
+}
+
+function projectFactory(points) {
+  const lats = points.map((p) => p.lat);
+  const lons = points.map((p) => p.lon);
+  const [minLat, maxLat] = [Math.min(...lats), Math.max(...lats)];
+  const [minLon, maxLon] = [Math.min(...lons), Math.max(...lons)];
+  const pad = 24;
+  const w = ui.canvas.clientWidth - pad * 2;
+  const h = ui.canvas.clientHeight - pad * 2;
+  const lonScale = Math.cos((minLat + maxLat) / 2 * Math.PI / 180);
+  const spanLat = Math.max(maxLat - minLat, 1e-6);
+  const spanLon = Math.max((maxLon - minLon) * lonScale, 1e-6);
+  const scale = Math.min(w / spanLon, h / spanLat);
+  return (point) => [
+    pad + w / 2 + (point.lon - (minLon + maxLon) / 2) * lonScale * scale,
+    pad + h / 2 - (point.lat - (minLat + maxLat) / 2) * scale,
+  ];
 }
 
 function drawCanvasTrack() {
@@ -106,35 +137,26 @@ function drawCanvasTrack() {
 
   if (track.length < 2) return;
 
-  const lats = track.map((p) => p[0]);
-  const lons = track.map((p) => p[1]);
-  const [minLat, maxLat] = [Math.min(...lats), Math.max(...lats)];
-  const [minLon, maxLon] = [Math.min(...lons), Math.max(...lons)];
-
-  const pad = 24;
-  const w = canvas.clientWidth - pad * 2;
-  const h = canvas.clientHeight - pad * 2;
-  // Keep the aspect ratio honest: latitude and longitude degrees are not the
-  // same distance, and a stretched track misrepresents the route.
-  const lonScale = Math.cos((minLat + maxLat) / 2 * Math.PI / 180);
-  const spanLat = Math.max(maxLat - minLat, 1e-6);
-  const spanLon = Math.max((maxLon - minLon) * lonScale, 1e-6);
-  const scale = Math.min(w / spanLon, h / spanLat);
-
-  const project = ([lat, lon]) => [
-    pad + w / 2 + (lon - (minLon + maxLon) / 2) * lonScale * scale,
-    pad + h / 2 - (lat - (minLat + maxLat) / 2) * scale,
-  ];
-
-  ctx.strokeStyle = '#f0883e';
-  ctx.lineWidth = 2.5;
+  const project = projectFactory(track);
+  ctx.lineWidth = 3;
   ctx.lineJoin = 'round';
-  ctx.beginPath();
-  track.forEach((point, i) => {
-    const [x, y] = project(point);
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  });
-  ctx.stroke();
+  ctx.lineCap = 'round';
+
+  for (let i = 1; i < track.length; i += 1) {
+    ctx.strokeStyle = TRAIL[track[i].kind] || TRAIL.normal;
+    ctx.beginPath();
+    const [x0, y0] = project(track[i - 1]);
+    const [x1, y1] = project(track[i]);
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    ctx.stroke();
+    if (track[i].kind === 'brake' && track[i - 1].kind !== 'brake') {
+      ctx.fillStyle = TRAIL.brake;
+      ctx.beginPath();
+      ctx.arc(x1, y1, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
 
   const [hx, hy] = project(track[track.length - 1]);
   ctx.fillStyle = '#fff';
@@ -143,33 +165,149 @@ function drawCanvasTrack() {
   ctx.fill();
 }
 
-function pushTrackPoint(lat, lon) {
-  if (!lat && !lon) return;
+function ensureDestMarker(s) {
+  if (!leafletMap || destMarker || !s.destination_latitude) return;
+  destMarker = L.circleMarker(
+    [s.destination_latitude, s.destination_longitude],
+    { radius: 8, color: '#fff', fillColor: '#58a6ff', fillOpacity: 0.95, weight: 2 },
+  ).addTo(leafletMap).bindTooltip('Destination', { direction: 'top' });
+}
 
+function addBrakeDot(lat, lon) {
+  if (!leafletMap) return;
+  const last = brakeDots[brakeDots.length - 1];
+  if (last) {
+    const prev = last.getLatLng();
+    const dlat = prev.lat - lat;
+    const dlon = prev.lng - lon;
+    if ((dlat * dlat + dlon * dlon) < 1e-10) return;
+  }
+  brakeDots.push(L.circleMarker([lat, lon], {
+    radius: 5, color: '#ffb4b0', fillColor: TRAIL.brake, fillOpacity: 1, weight: 1.5,
+  }).addTo(leafletMap));
+}
+
+function addHazardDot(lat, lon, label) {
+  if (!leafletMap || !lat) return;
+  hazardDots.push(L.circleMarker([lat, lon], {
+    radius: 6, color: '#fff', fillColor: '#d29922', fillOpacity: 1, weight: 2,
+  }).addTo(leafletMap).bindTooltip(label || 'hazard', { direction: 'top' }));
+}
+
+function appendColourSegment(lat, lon, kind) {
+  const color = TRAIL[kind] || TRAIL.normal;
+  const lastLine = colorLines[colorLines.length - 1];
+  const lastPoint = track[track.length - 1];
+  if (lastLine && lastPoint && lastPoint.kind === kind) {
+    lastLine.addLatLng([lat, lon]);
+    return;
+  }
+  const latlngs = lastPoint ? [[lastPoint.lat, lastPoint.lon], [lat, lon]] : [[lat, lon]];
+  const line = L.polyline(latlngs, {
+    color,
+    weight: kind === 'brake' ? 5 : 4,
+    opacity: 0.95,
+    lineJoin: 'round',
+    lineCap: 'round',
+  }).addTo(leafletMap);
+  colorLines.push(line);
+}
+
+function pushTrackSample(s) {
+  if (!s.gps_valid || (!s.latitude && !s.longitude)) return;
+
+  const kind = trailKind(s);
   const last = track[track.length - 1];
-  // Skip points the rider has not meaningfully moved between; at 10 Hz this
-  // is most of them, and the line does not need that density.
-  if (last && Math.abs(last[0] - lat) < 1e-6 && Math.abs(last[1] - lon) < 1e-6) return;
+  if (last && Math.abs(last.lat - s.latitude) < 1e-6 && Math.abs(last.lon - s.longitude) < 1e-6) {
+    return;
+  }
 
   const firstPoint = track.length === 0;
-  track.push([lat, lon]);
-  if (track.length > MAX_TRACK_POINTS) track.shift();
+  if (last && kind === 'brake' && last.kind !== 'brake') {
+    addBrakeDot(s.latitude, s.longitude);
+  }
 
   if (leafletMap) {
-    trackLine.setLatLngs(track);
-    marker.setLatLng([lat, lon]);
+    appendColourSegment(s.latitude, s.longitude, kind);
+    marker.setLatLng([s.latitude, s.longitude]);
     if (firstPoint) {
-      // Jump from the world view to the rider once we know where they are.
-      leafletMap.setView([lat, lon], 16);
+      startMarker = L.circleMarker([s.latitude, s.longitude], {
+        radius: 5, color: '#fff', fillColor: '#8b949e', fillOpacity: 1, weight: 2,
+      }).addTo(leafletMap).bindTooltip('Start', { direction: 'top' });
+      leafletMap.setView([s.latitude, s.longitude], 15);
     } else if (followRider) {
-      leafletMap.panTo([lat, lon], { animate: false });
+      leafletMap.panTo([s.latitude, s.longitude], { animate: false });
     }
-  } else if (!ui.canvas.hidden) {
-    drawCanvasTrack();
+  }
+
+  track.push({ lat: s.latitude, lon: s.longitude, kind });
+  if (track.length > MAX_TRACK_POINTS) track.shift();
+
+  ensureDestMarker(s);
+  if (!leafletMap && !ui.canvas.hidden) drawCanvasTrack();
+}
+
+/* ---------- log box ---------- */
+
+function logKey(message) {
+  return `${message.type}|${message.timestamp}|${message.rider || ''}|${message.text || message.apex || ''}`;
+}
+
+function appendLog(message) {
+  const key = logKey(message);
+  if (seenLogKeys.has(key)) return;
+  seenLogKeys.add(key);
+
+  if (ui.rideLog.querySelector('.log-empty')) ui.rideLog.innerHTML = '';
+
+  const row = document.createElement('div');
+  const isVoice = message.type === 'voice';
+  row.className = `log-row ${isVoice ? 'voice' : `event ${message.kind || ''}`}`;
+
+  const clock = message.clock || new Date((message.timestamp || 0) * 1000).toLocaleTimeString();
+  const time = document.createElement('div');
+  time.className = 'log-time';
+  time.textContent = clock;
+
+  const body = document.createElement('div');
+  body.className = 'log-body';
+  if (isVoice) {
+    body.innerHTML =
+      `<div><span class="log-who">Rider</span> <span class="log-rider">${escapeHtml(message.rider || '')}</span></div>`
+      + `<div><span class="log-who">Apex</span> <span class="log-apex">${escapeHtml(message.apex || '')}</span></div>`;
+    if (message.intent === 'hazard' && message.latitude) {
+      addHazardDot(message.latitude, message.longitude, message.hazard_type || 'hazard');
+    }
+  } else {
+    body.innerHTML = `<div class="log-event-text">${escapeHtml(message.text || '')}</div>`;
+  }
+
+  row.append(time, body);
+  ui.rideLog.appendChild(row);
+  ui.rideLog.scrollTop = ui.rideLog.scrollHeight;
+  logCount += 1;
+
+  if (message.kind === 'hard_brake' || message.kind === 'sudden_stop') {
+    addBrakeDot(message.latitude, message.longitude);
   }
 }
 
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 /* ---------- rendering ---------- */
+
+function formatRemaining(s) {
+  if (!s.destination_latitude && !s.remaining_m) return '—';
+  if (s.remaining_m < 80) return 'arrived';
+  if (s.remaining_m < 1000) return `${s.remaining_m.toFixed(0)} m`;
+  return `${(s.remaining_m / 1000).toFixed(2)} km`;
+}
 
 function render(s) {
   framesReceived += 1;
@@ -184,10 +322,10 @@ function render(s) {
   setArc(ui.gArc, s.g_force / G_MAX);
 
   ui.lean.textContent = s.lean_angle_deg.toFixed(1);
-  // Negative lean is a left turn; rotate the icon the same way the bike goes.
   ui.leanBike.setAttribute('transform', `rotate(${-s.lean_angle_deg.toFixed(1)})`);
 
   ui.distance.textContent = (s.distance_m / 1000).toFixed(3);
+  ui.remaining.textContent = formatRemaining(s);
   ui.gradient.textContent = s.gradient_pct.toFixed(1);
   ui.altitude.textContent = s.altitude_m.toFixed(0);
   ui.heading.textContent = s.heading_deg.toFixed(0);
@@ -204,7 +342,7 @@ function render(s) {
   ui.state.textContent = s.system_state.replace(/_/g, ' ');
   ui.state.className = `pill ${s.system_state}`;
 
-  if (s.gps_valid) pushTrackPoint(s.latitude, s.longitude);
+  pushTrackSample(s);
 
   ui.diag.textContent =
     `${framesReceived} frames · ${track.length} track points · fusion ${fusion}`;
@@ -212,10 +350,6 @@ function render(s) {
 
 /* ---------- crash and SOS ---------- */
 
-/* The banner counts down locally rather than waiting for server frames. The
- * server is authoritative about whether the SOS fires; the client only has to
- * show a number that ticks, and a number that jumps in 100 ms steps as frames
- * arrive reads as broken at exactly the moment the rider needs to trust it. */
 function showAlert(sos, event) {
   const state = sos.state;
 
@@ -283,14 +417,24 @@ function setLink(up) {
   ui.link.className = `pill ${up ? 'link-up' : 'link-down'}`;
 }
 
+function handleMessage(message) {
+  if (message.type === 'voice' || message.type === 'event') {
+    appendLog(message);
+    return;
+  }
+  if (message.sos) {
+    showAlert(message.sos, message.event);
+    return;
+  }
+  render(message);
+}
+
 function connect() {
   const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
   const socket = new WebSocket(`${scheme}://${location.host}/ws/telemetry`);
 
   socket.onopen = () => {
     setLink(true);
-    // The server reads from the socket to detect disconnects; a periodic ping
-    // keeps that read fed and proves the link both ways.
     socket.__ping = setInterval(() => {
       if (socket.readyState === WebSocket.OPEN) socket.send('ping');
     }, 5000);
@@ -298,11 +442,7 @@ function connect() {
 
   socket.onmessage = (event) => {
     try {
-      const message = JSON.parse(event.data);
-      // Telemetry frames are bare samples; anything with a `type` is an alert
-      // published outside the rate throttle.
-      if (message.type) showAlert(message.sos, message.event);
-      else render(message);
+      handleMessage(JSON.parse(event.data));
     } catch (err) {
       console.error('bad telemetry frame', err);
     }
@@ -311,7 +451,7 @@ function connect() {
   const teardown = () => {
     clearInterval(socket.__ping);
     setLink(false);
-    setTimeout(connect, 2000); // the Pi may simply be rebooting
+    setTimeout(connect, 2000);
   };
   socket.onclose = teardown;
   socket.onerror = () => socket.close();
@@ -319,13 +459,26 @@ function connect() {
 
 async function loadHistory() {
   try {
-    const response = await fetch('/api/history?seconds=120&step=5');
+    const response = await fetch('/api/history?seconds=900&step=4');
     if (!response.ok) return;
     const data = await response.json();
-    data.samples.filter((s) => s.gps_valid).forEach((s) => pushTrackPoint(s.latitude, s.longitude));
+    data.samples.forEach((s) => {
+      if (s.gps_valid) pushTrackSample(s);
+    });
     if (data.samples.length) render(data.samples[data.samples.length - 1]);
   } catch (err) {
     console.warn('no history available yet', err);
+  }
+}
+
+async function loadEvents() {
+  try {
+    const response = await fetch('/api/events');
+    if (!response.ok) return;
+    const data = await response.json();
+    (data.events || []).forEach(appendLog);
+  } catch (err) {
+    console.warn('no event log yet', err);
   }
 }
 
@@ -334,15 +487,13 @@ async function loadIdentity() {
     const response = await fetch('/api/health');
     if (!response.ok) return;
     const data = await response.json();
-    ui.ride.textContent = data.ride_id;
+    ui.ride.textContent = data.route || data.ride_id;
     ui.helmet.textContent =
       data.sensor_backend === 'sim' ? `${data.helmet_id} (sim)` : data.helmet_id;
   } catch { /* the dashboard still works without it */ }
 }
 
 async function loadSos() {
-  // A page opened or reloaded mid-countdown must show the banner immediately,
-  // not wait for the next state change that may never come.
   try {
     const response = await fetch('/api/sos');
     if (!response.ok) return;
@@ -360,4 +511,5 @@ ui.alertCancel.addEventListener('click', cancelSos);
 initMap();
 loadIdentity();
 loadSos();
+loadEvents();
 loadHistory().then(connect);

@@ -25,11 +25,14 @@ from typing import Any
 from app.config import AppConfig, load_config
 from app.models import RideSample
 from app.pipeline.coordinator import Coordinator
+from app.pipeline.events import EventLog, RideDirector
 from app.safety.monitor import SafetyMonitor
+from app.sensors.demo import nagpur_airport_profile
 from app.sensors.simulated import RideProfile, RideSimulator
 from app.storage.batch_writer import BatchWriter
 from app.storage.influxdb import InfluxWriter
 from app.streaming.websocket import TelemetryHub
+from app.voice.assistant import VoiceAssistant
 
 logger = logging.getLogger("apex")
 
@@ -68,6 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
     for name, help_text in (
         ("dashboard", "serve the web dashboard"),
         ("storage", "persist telemetry to InfluxDB"),
+        ("voice", "enable the offline voice assistant"),
     ):
         group = parser.add_mutually_exclusive_group()
         group.add_argument(f"--{name}", dest=name, action="store_true", help=help_text)
@@ -78,7 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
     # None means "leave whatever the config file says". Without this, the
     # store_false actions would default their dest to True and silently force
     # both services on.
-    parser.set_defaults(dashboard=None, storage=None)
+    parser.set_defaults(dashboard=None, storage=None, voice=None)
     return parser
 
 
@@ -103,6 +107,8 @@ def resolve_config(args: argparse.Namespace) -> AppConfig:
         config.dashboard.enabled = args.dashboard
     if args.storage is not None:
         config.storage.enabled = args.storage
+    if args.voice is not None:
+        config.voice.enabled = args.voice
     return config
 
 
@@ -121,13 +127,18 @@ class ConsoleReporter:
 
         metrics = sample.metrics
         state = sample.state
+        remaining = (
+            f"  eta {metrics.remaining_m / 1000.0:5.2f} km"
+            if metrics.remaining_m > 0
+            else ""
+        )
         line = (
             f"{sample.system_state.value:<15} "
             f"{metrics.speed_kmh:6.1f} km/h  "
             f"{metrics.g_force:4.2f} g  "
             f"lean {metrics.lean_angle_deg:+6.1f} deg  "
             f"grade {metrics.gradient_pct:+5.1f}%  "
-            f"{metrics.distance_m / 1000.0:6.3f} km  "
+            f"{metrics.distance_m / 1000.0:6.3f} km{remaining}  "
             f"{state.latitude:9.5f},{state.longitude:9.5f}  "
             f"sats {sample.satellites:2d}  "
             f"{state.mode.value}"
@@ -151,7 +162,10 @@ class ApexNode:
     hub: TelemetryHub | None = None
     batch_writer: BatchWriter | None = None
     safety: SafetyMonitor | None = None
+    voice: VoiceAssistant | None = None
     reporter: ConsoleReporter | None = None
+    event_log: EventLog | None = None
+    director: RideDirector | None = None
     _server_task: asyncio.Task[None] | None = field(default=None, init=False)
     _server: Any = field(default=None, init=False)
 
@@ -163,6 +177,9 @@ class ApexNode:
         if self.safety is not None:
             await self.safety.start()
 
+        if self.voice is not None:
+            await self.voice.start()
+
         if self.config.dashboard.enabled and self.hub is not None:
             await self._start_dashboard()
 
@@ -171,7 +188,14 @@ class ApexNode:
 
         from app.dashboard.app import create_app
 
-        app = create_app(self.coordinator, self.hub, self.batch_writer, self.safety)
+        app = create_app(
+            self.coordinator,
+            self.hub,
+            self.batch_writer,
+            self.safety,
+            self.voice,
+            event_log=self.event_log,
+        )
         server_config = uvicorn.Config(
             app,
             host=self.config.dashboard.host,
@@ -202,6 +226,9 @@ class ApexNode:
 
         # Safety stops before storage so a crash recorded on the way out still
         # has somewhere to be written.
+        if self.voice is not None:
+            await self.voice.stop()
+
         if self.safety is not None:
             await self.safety.stop()
 
@@ -219,6 +246,8 @@ class ApexNode:
             payload["storage"] = self.batch_writer.stats.as_dict()
         if self.safety is not None:
             payload["safety"] = self.safety.stats()
+        if self.voice is not None:
+            payload["voice"] = self.voice.stats.as_dict()
         return payload
 
 
@@ -227,13 +256,23 @@ def build_node(
 ) -> ApexNode:
     """Wire the coordinator to whichever consumers the config enables."""
     simulator = None
-    if simulate_crash_at is not None:
-        if config.node.sensor_backend != "sim":
-            raise SystemExit("--simulate-crash requires --backend sim")
-        simulator = RideSimulator(RideProfile(crash_at_s=simulate_crash_at))
-        logger.warning("Scripted crash at t+%.1fs; this is a rehearsal", simulate_crash_at)
+    if simulate_crash_at is not None and config.node.sensor_backend != "sim":
+        raise SystemExit("--simulate-crash requires --backend sim")
+    if config.node.sensor_backend == "sim":
+        if simulate_crash_at is not None:
+            simulator = RideSimulator(RideProfile(crash_at_s=simulate_crash_at))
+            logger.warning(
+                "Scripted crash at t+%.1fs; this is a rehearsal", simulate_crash_at
+            )
+        else:
+            simulator = RideSimulator(nagpur_airport_profile())
+            logger.info("Sim ride: %s", simulator.profile.route_name)
 
-    coordinator = Coordinator(config, simulator=simulator)
+    # Voice needs the microphone even when sensors.mic.enabled is false in the
+    # shipped config — that flag is the hardware default, not a voice disable.
+    coordinator = Coordinator(
+        config, simulator=simulator, include_mic=config.voice.enabled
+    )
     node = ApexNode(config=config, coordinator=coordinator)
 
     if not quiet:
@@ -256,6 +295,26 @@ def build_node(
         node.safety = SafetyMonitor(
             config, coordinator, hub=node.hub, batch_writer=node.batch_writer
         )
+
+    if config.voice.enabled:
+        node.voice = VoiceAssistant(
+            config,
+            coordinator,
+            safety=node.safety,
+            batch_writer=node.batch_writer,
+        )
+
+    if node.hub is not None:
+        node.event_log = EventLog()
+        node.director = RideDirector(
+            coordinator,
+            event_log=node.event_log,
+            hub=node.hub,
+            voice=node.voice,
+        )
+        coordinator.subscribe_sample(node.director.on_sample)
+        if node.voice is not None:
+            node.voice.on_exchange = node.director.on_voice
 
     return node
 

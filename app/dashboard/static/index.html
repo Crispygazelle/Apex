@@ -70,8 +70,13 @@
     <div class="speed-sub"><span>peak <b id="maxG">0.00</b> g</span></div>
   </section>
 
-  <section class="panel wide">
+  <section class="panel wide map-panel">
     <h2>Position</h2>
+    <div class="trail-legend" aria-hidden="true">
+      <span><i class="swatch fast"></i> fast</span>
+      <span><i class="swatch normal"></i> normal</span>
+      <span><i class="swatch brake"></i> braking</span>
+    </div>
     <div id="map"></div>
     <canvas id="trackCanvas" hidden></canvas>
     <p id="mapNote" class="muted small"></p>
@@ -81,6 +86,7 @@
     <h2>Ride</h2>
     <dl>
       <dt>Distance</dt><dd><span id="distance">0.000</span> km</dd>
+      <dt>Remaining</dt><dd><span id="remaining">—</span></dd>
       <dt>Gradient</dt><dd><span id="gradient">0.0</span> %</dd>
       <dt>Altitude</dt><dd><span id="altitude">0</span> m</dd>
       <dt>Heading</dt><dd><span id="heading">0</span>&deg;</dd>
@@ -89,6 +95,13 @@
       <dt>Position conf.</dt><dd><span id="posConf">0</span> %</dd>
       <dt>Coordinates</dt><dd class="mono"><span id="coords">—</span></dd>
     </dl>
+  </section>
+
+  <section class="panel wide log-panel">
+    <h2>Voice &amp; events</h2>
+    <div id="rideLog" class="ride-log" aria-live="polite">
+      <p class="log-empty muted small">Waiting for the rider…</p>
+    </div>
   </section>
 </main>
 

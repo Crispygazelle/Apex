@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import StorageConfig
-from app.models import CrashEvent, RideSample
+from app.models import CrashEvent, HazardReport, RideSample
 from app.storage.influxdb import InfluxWriter
 
 logger = logging.getLogger(__name__)
@@ -33,6 +33,7 @@ SPOOL_SUFFIX = ".jsonl"
 # Kept out of the replay glob on purpose: crash records are not sample rows and
 # must not be fed back through the telemetry replay path.
 CRASH_LOG_NAME = "crashes.log"
+HAZARD_LOG_NAME = "hazards.log"
 # Reconnect attempts are spaced so a long outage does not spin the CPU.
 RECONNECT_INTERVAL_S = 30.0
 
@@ -139,6 +140,25 @@ class BatchWriter:
                 handle.write("\n")
         except OSError as exc:
             logger.error("Could not write crash log: %s", exc)
+
+    async def record_hazard(self, hazard: HazardReport) -> bool:
+        """Persist a rider-logged hazard to disk, and to InfluxDB if reachable."""
+        await asyncio.to_thread(self._append_hazard_log, hazard)
+        written = await asyncio.to_thread(self.writer.write_hazard, hazard)
+        if not written:
+            self.stats.last_error = self.writer.last_error
+            logger.info("Hazard kept on disk; InfluxDB was not reachable")
+        return written
+
+    def _append_hazard_log(self, hazard: HazardReport) -> None:
+        self.spool_dir.mkdir(parents=True, exist_ok=True)
+        path = self.spool_dir / HAZARD_LOG_NAME
+        try:
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(asdict(hazard), separators=(",", ":")))
+                handle.write("\n")
+        except OSError as exc:
+            logger.error("Could not write hazard log: %s", exc)
 
     async def _flush_loop(self) -> None:
         interval = max(0.5, self.config.flush_interval_s)

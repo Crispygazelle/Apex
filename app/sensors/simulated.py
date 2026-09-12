@@ -20,13 +20,14 @@ import random
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from math import atan, cos, degrees, exp, pi, radians, sin
+from math import atan, copysign, cos, degrees, exp, pi, radians, sin
 
 from app import clock
 from app.config import GpsConfig, ImuConfig, MicConfig
-from app.geo import GeoOrigin
+from app.geo import GeoOrigin, angle_difference_deg
 from app.models import SensorReading, SensorSource
 from app.sensors.base import Sensor
+from app.sensors.path import RidePath
 
 GRAVITY = 9.80665
 SAMPLE_WIDTH_BYTES = 2
@@ -54,18 +55,23 @@ class TrueState:
 
 @dataclass
 class RideProfile:
-    """Shape of the synthetic ride."""
+    """Shape of the synthetic ride.
 
-    start_latitude: float = 12.9716  # Bengaluru, matching the delivery-fleet use case
-    start_longitude: float = 77.5946
-    start_altitude_m: float = 920.0
+    With no waypoints this is the original analytic weave: a heading sine,
+    a speed wave, one Gaussian brake. Tests rely on that. Fill `waypoints` and
+    `speed_zones` to follow a real A-to-B polyline instead.
+    """
+
+    start_latitude: float = 21.14631  # Nagpur (Sitabuldi / city centre)
+    start_longitude: float = 79.08491
+    start_altitude_m: float = 310.0
     start_heading_deg: float = 45.0
-    cruise_mps: float = 13.9  # ~50 km/h
+    cruise_mps: float = 22.2  # ~80 km/h
     stationary_s: float = 4.0
-    spool_up_s: float = 8.0
+    spool_up_s: float = 5.0
     speed_wave_period_s: float = 45.0
-    heading_amplitude_deg: float = 25.0
-    heading_period_s: float = 30.0
+    heading_amplitude_deg: float = 40.0
+    heading_period_s: float = 15.0
     hill_amplitude_m: float = 35.0
     hill_period_s: float = 120.0
     brake_at_s: float = 65.0
@@ -77,6 +83,17 @@ class RideProfile:
     # which is otherwise only testable by actually crashing a motorcycle.
     crash_at_s: float | None = None
     crash_peak_g: float = 8.0
+    # Optional GPX-style polyline (lat, lon). Empty keeps the analytic weave.
+    waypoints: list[tuple[float, float]] = field(default_factory=list)
+    # (start_m, end_m, speed_mps) along that polyline.
+    speed_zones: list[tuple[float, float, float]] = field(default_factory=list)
+    potholes_m: list[float] = field(default_factory=list)
+    pothole_peak_g: float = 2.4
+    max_accel_mps2: float = 2.4
+    max_brake_mps2: float = 7.5
+    voice_script: list[tuple[float, str]] = field(default_factory=list)
+    route_name: str = ""
+    destination_name: str = ""
 
 
 # A crash is three distinct phases, and the detector depends on all three:
@@ -84,10 +101,23 @@ class RideProfile:
 CRASH_IMPACT_S = 0.12
 CRASH_DECEL_S = 0.45
 CRASH_TUMBLE_S = 1.6
+# Path-following corners from OSM can be vertex-sharp. Cap yaw so the IMU
+# does not report a 90-degree snap in 5 ms, which winds the lean filter up
+# into hundreds of degrees and can trip the crash detector.
+MAX_PATH_YAW_DPS = 48.0
+MAX_PATH_LEAN_DEG = 38.0
+MAX_PATH_ROLL_DPS = 70.0
 
 
 class RideSimulator:
-    """Analytic speed/heading/altitude profile with integrated position."""
+    """Speed/heading/altitude profile with integrated position.
+
+    Two modes share one object so IMU and GPS cannot drift apart:
+
+    * analytic — the original heading sine, used by the accuracy tests
+    * path-following — a polyline plus distance-based speed zones, used by the
+      dashboard demo so the trail sits on real Nagpur roads
+    """
 
     def __init__(self, profile: RideProfile | None = None) -> None:
         self.profile = profile or RideProfile()
@@ -96,14 +126,43 @@ class RideSimulator:
             self.profile.start_longitude,
             self.profile.start_altitude_m,
         )
+        self._path = RidePath(self.profile.waypoints) if self.profile.waypoints else None
         self._t = 0.0
         self._east = 0.0
         self._north = 0.0
         self._distance = 0.0
+        self._speed = 0.0
+        self._accel = 0.0
+        self._heading_unwrapped = (
+            self._path.heading_deg(0.0)
+            if self._path is not None
+            else self.profile.start_heading_deg
+        )
+        self._yaw_rate = 0.0
+        self._lean_deg = 0.0
+        self._roll_rate = 0.0
+
+    @property
+    def distance_m(self) -> float:
+        return self._distance
+
+    @property
+    def destination(self) -> tuple[float, float] | None:
+        if self._path is None:
+            return None
+        return self._path.waypoints[-1]
+
+    @property
+    def route_length_m(self) -> float:
+        return 0.0 if self._path is None else self._path.length_m
 
     # --- analytic profile -------------------------------------------------
 
     def speed_at(self, t: float) -> float:
+        if self._path is not None:
+            self._advance_to(t)
+            return self._speed
+
         since_crash = self.crash_elapsed(t)
         if since_crash is not None:
             # The bike stops in under half a second and stays stopped. This is
@@ -129,6 +188,28 @@ class RideSimulator:
         brake = 1.0 - p.brake_depth * exp(-z * z)
         return max(0.0, p.cruise_mps * spool * wave * brake)
 
+    def _zone_speed(self, distance_m: float) -> float:
+        for start, end, mps in self.profile.speed_zones:
+            if start <= distance_m < end:
+                return mps
+        return self.profile.cruise_mps
+
+    def _target_speed(self, t: float, distance_m: float) -> float:
+        since_crash = self.crash_elapsed(t)
+        if since_crash is not None:
+            if since_crash >= CRASH_DECEL_S:
+                return 0.0
+            impact_speed = self._zone_speed(distance_m)
+            return impact_speed * (1.0 - since_crash / CRASH_DECEL_S) ** 2
+
+        p = self.profile
+        u = t - p.stationary_s
+        if u <= 0.0:
+            return 0.0
+        zone = self._zone_speed(distance_m)
+        spool = min(1.0, u / max(p.spool_up_s, 1e-3))
+        return zone * spool
+
     def crash_elapsed(self, t: float) -> float | None:
         """Seconds since the scripted impact, or None if it has not happened."""
         crash_at = self.profile.crash_at_s
@@ -137,6 +218,10 @@ class RideSimulator:
         return t - crash_at
 
     def heading_unwrapped_at(self, t: float) -> float:
+        if self._path is not None:
+            self._advance_to(t)
+            return self._heading_unwrapped
+
         p = self.profile
         if p.crash_at_s is not None and t >= p.crash_at_s:
             # A wreck does not keep steering.
@@ -155,6 +240,10 @@ class RideSimulator:
 
     def _advance_to(self, t: float) -> None:
         """Integrate ground-track position forward. Requests must not go back."""
+        if self._path is not None:
+            self._advance_along_path(t)
+            return
+
         while self._t < t:
             step = min(0.005, t - self._t)
             mid = self._t + step / 2.0
@@ -165,36 +254,94 @@ class RideSimulator:
             self._distance += speed * step
             self._t += step
 
+    def _advance_along_path(self, t: float) -> None:
+        """Follow the polyline by arc-length. Speed is zone-based with accel caps."""
+        path = self._path
+        assert path is not None
+        p = self.profile
+
+        while self._t < t:
+            step = min(0.005, t - self._t)
+            mid = self._t + step / 2.0
+            target = self._target_speed(mid, self._distance)
+            delta = target - self._speed
+            limit = p.max_accel_mps2 if delta >= 0.0 else p.max_brake_mps2
+            max_step = limit * step
+            new_speed = target if abs(delta) <= max_step else self._speed + (
+                max_step if delta > 0.0 else -max_step
+            )
+            new_speed = max(0.0, new_speed)
+            self._accel = (new_speed - self._speed) / step if step > 0.0 else 0.0
+            self._speed = new_speed
+            self._distance = min(path.length_m, self._distance + self._speed * step)
+
+            latitude, longitude = path.point(self._distance)
+            self._east, self._north = self._origin.to_enu(latitude, longitude)
+
+            heading_raw = path.heading_deg(self._distance)
+            wrapped = self._heading_unwrapped % 360.0
+            turn = angle_difference_deg(heading_raw, wrapped)
+            max_turn = MAX_PATH_YAW_DPS * step
+            if abs(turn) > max_turn:
+                turn = copysign(max_turn, turn)
+            self._heading_unwrapped += turn
+            self._yaw_rate = turn / step if step > 0.0 else 0.0
+
+            target_lean = degrees(atan(self._speed * radians(self._yaw_rate) / GRAVITY))
+            target_lean = max(-MAX_PATH_LEAN_DEG, min(MAX_PATH_LEAN_DEG, target_lean))
+            max_dlean = MAX_PATH_ROLL_DPS * step
+            dlean = target_lean - self._lean_deg
+            if abs(dlean) > max_dlean:
+                dlean = copysign(max_dlean, dlean)
+            self._roll_rate = dlean / step if step > 0.0 else 0.0
+            self._lean_deg += dlean
+            self._t += step
+
     def _lean_at(self, t: float) -> float:
         """Lean angle implied by the speed and turn rate at time t."""
+        if self._path is not None:
+            self._advance_to(t)
+            return self._lean_deg
         yaw_rate = _derivative(self.heading_unwrapped_at, t)
         return degrees(atan(self.speed_at(t) * radians(yaw_rate) / GRAVITY))
 
     def state_at(self, t: float) -> TrueState:
         self._advance_to(t)
 
-        speed = self.speed_at(t)
-        accel_forward = _derivative(self.speed_at, t)
-        yaw_rate = _derivative(self.heading_unwrapped_at, t)
+        if self._path is not None:
+            speed = self._speed
+            accel_forward = self._accel
+            yaw_rate = self._yaw_rate
+            lean = self._lean_deg
+            roll_rate = self._roll_rate
+            heading_unwrapped = self._heading_unwrapped
+        else:
+            speed = self.speed_at(t)
+            accel_forward = _derivative(self.speed_at, t)
+            yaw_rate = _derivative(self.heading_unwrapped_at, t)
+            lean = self._lean_at(t)
+            roll_rate = _derivative(self._lean_at, t)
+            heading_unwrapped = self.heading_unwrapped_at(t)
 
-        # A bike corners by leaning until gravity and centripetal force align
-        # with its own vertical: tan(lean) = v * omega / g.
-        lean = self._lean_at(t)
-        roll_rate = _derivative(self._lean_at, t)
-
+        # altitude_at is a closed function of time, so a central difference is
+        # safe. speed_at is not: on a polyline it integrates forward and must
+        # not be sampled around t.
         climb_rate = _derivative(self.altitude_at, t)
         gradient = climb_rate / speed if speed > 0.5 else 0.0
         pitch = degrees(atan(gradient))
-        pitch_rate = _derivative(
-            lambda x: degrees(
-                atan(
-                    _derivative(self.altitude_at, x) / self.speed_at(x)
-                    if self.speed_at(x) > 0.5
-                    else 0.0
-                )
-            ),
-            t,
-        )
+        if self._path is not None:
+            pitch_rate = 0.0
+        else:
+            pitch_rate = _derivative(
+                lambda x: degrees(
+                    atan(
+                        _derivative(self.altitude_at, x) / self.speed_at(x)
+                        if self.speed_at(x) > 0.5
+                        else 0.0
+                    )
+                ),
+                t,
+            )
 
         latitude, longitude = self._origin.to_geodetic(self._east, self._north)
         return TrueState(
@@ -203,7 +350,7 @@ class RideSimulator:
             longitude=longitude,
             altitude_m=self.altitude_at(t),
             speed_mps=speed,
-            heading_deg=self.heading_unwrapped_at(t) % 360.0,
+            heading_deg=heading_unwrapped % 360.0,
             yaw_rate_dps=yaw_rate,
             lean_deg=lean,
             roll_rate_dps=roll_rate,
@@ -218,6 +365,17 @@ class RideSimulator:
         if t < self.profile.gps_lock_s:
             return False
         return not any(start <= t <= end for start, end in self.profile.gps_dropouts)
+
+    def pothole_force(self) -> tuple[float, float]:
+        """Body-frame accel bump if the wheel is on a scripted pothole."""
+        width_m = 1.4
+        peak = self.profile.pothole_peak_g * GRAVITY
+        for hole in self.profile.potholes_m:
+            offset = self._distance - hole
+            if abs(offset) <= width_m:
+                shape = cos(pi * offset / (2.0 * width_m))
+                return -0.40 * peak * shape, 0.90 * peak * shape
+        return 0.0, 0.0
 
 
 def _derivative(fn: Callable[[float], float], t: float, h: float = 1e-3) -> float:
@@ -307,6 +465,10 @@ class SimulatedImu(_SimulatedSensor):
 
         gx, gy, gz = st.roll_rate_dps, st.pitch_rate_dps, st.yaw_rate_dps
         impact_x, impact_z, agitation = self._crash_forces(t)
+        if not agitation:
+            hole_x, hole_z = self.simulator.pothole_force()
+            impact_x += hole_x
+            impact_z += hole_z
         ax += impact_x
         az += impact_z
         if agitation:

@@ -1,0 +1,25 @@
+[Unit]
+Description=APEX helmet edge node
+Documentation=https://github.com/Crispygazelle/Apex
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=apex
+Group=apex
+WorkingDirectory=/opt/apex
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/apex/apex.env
+# hardware backend is the point of running under systemd on the Pi.
+# --quiet keeps the journal free of the rewriting console line.
+ExecStart=/opt/apex/.venv/bin/python -m app.main --backend hardware --quiet
+Restart=on-failure
+RestartSec=5
+# The IMU thread wants regular wakeups. Nice is a hint, not a guarantee.
+Nice=-5
+# Prefer this process over a browser tab if the 512 MB starts to hurt.
+OOMScoreAdjust=-200
+
+[Install]
+WantedBy=multi-user.target

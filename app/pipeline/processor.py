@@ -15,7 +15,7 @@ from __future__ import annotations
 from math import cos, radians, sin
 
 from app.config import AppConfig
-from app.geo import GeoOrigin, compass_heading
+from app.geo import GeoOrigin, compass_heading, haversine_m
 from app.models import (
     FusionMode,
     MotionState,
@@ -41,6 +41,8 @@ class Processor:
         self.metrics = MetricsCalculator(config.calibration)
 
         self.origin: GeoOrigin | None = None
+        self.destination: tuple[float, float] | None = None
+        self.route_length_m: float = 0.0
         self._last_accel_enu: tuple[float, float] = (0.0, 0.0)
         self._heading_deg = 0.0
         self._altitude_m = 0.0
@@ -206,6 +208,15 @@ class Processor:
             else self._heading_deg
         )
 
+        remaining_m = 0.0
+        dest_lat = dest_lon = 0.0
+        if self.destination is not None:
+            dest_lat, dest_lon = self.destination
+            if self.route_length_m > 0.0:
+                remaining_m = max(0.0, self.route_length_m - self.metrics.distance_m)
+            else:
+                remaining_m = haversine_m(latitude, longitude, dest_lat, dest_lon)
+
         state = MotionState(
             timestamp=timestamp,
             x_m=filter_state.east_m,
@@ -229,7 +240,12 @@ class Processor:
             timestamp=timestamp,
             ride_id=self.ride_id,
             state=state,
-            metrics=self.metrics.snapshot(speed),
+            metrics=self.metrics.snapshot(
+                speed,
+                remaining_m=remaining_m,
+                destination_latitude=dest_lat,
+                destination_longitude=dest_lon,
+            ),
             system_state=self.system_state,
             gps_valid=self._gps_valid,
             satellites=self._satellites,
