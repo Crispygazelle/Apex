@@ -15,6 +15,12 @@ const G_MAX = 4;
 const MAX_TRACK_POINTS = 15000;
 const FAST_KMH = 70;
 const BRAKE_MPS2 = -2.8;
+const TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+// A first tile off a cold cache can take a while on a phone hotspot, and
+// losing the street map mid-ride is worse than a few seconds of grey.
+const TILE_GRACE_MS = 12000;
+const TILE_RETRY_MS = 15000;
+const TILE_PROBE_URL = 'https://tile.openstreetmap.org/2/1/1.png';
 const TRAIL = {
   fast: '#9b5de5',
   normal: '#3ecf8e',
@@ -38,6 +44,8 @@ const ui = {
 };
 
 let track = [];
+let hazards = [];
+let lastSample = null;
 let leafletMap = null;
 let colorLines = [];
 let brakeDots = [];
@@ -46,6 +54,7 @@ let marker = null;
 let startMarker = null;
 let destMarker = null;
 let followRider = true;
+let tileProbeTimer = null;
 let framesReceived = 0;
 let countdownTimer = null;
 let logCount = 0;
@@ -75,22 +84,26 @@ function trailKind(s) {
 
 function initMap() {
   if (window.__leafletFailed || typeof L === 'undefined') {
-    useCanvasFallback('Map tiles unavailable; drawing the track locally.');
+    // Leaflet itself never arrived, so there are no tiles to wait for.
+    useCanvasFallback('Leaflet unavailable; drawing the track locally.', false);
     return;
   }
+
+  ui.map.hidden = false;
+  ui.canvas.hidden = true;
 
   leafletMap = L.map('map', { zoomControl: true, attributionControl: false });
   leafletMap.setView([20, 0], 2);
 
-  const tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-  });
+  const tiles = L.tileLayer(TILE_URL, { maxZoom: 19 });
   let tileLoaded = false;
   tiles.on('tileload', () => { tileLoaded = true; });
   tiles.addTo(leafletMap);
   setTimeout(() => {
-    if (!tileLoaded) useCanvasFallback('Offline: tiles unreachable, showing local track.');
-  }, 4000);
+    if (!tileLoaded && leafletMap) {
+      useCanvasFallback('Offline: tiles unreachable, showing local track.', true);
+    }
+  }, TILE_GRACE_MS);
 
   marker = L.circleMarker([0, 0], {
     radius: 7, color: '#fff', fillColor: '#f0883e', fillOpacity: 1, weight: 2,
@@ -99,12 +112,83 @@ function initMap() {
   leafletMap.on('dragstart', () => { followRider = false; });
 }
 
-function useCanvasFallback(note) {
+/* Falling back is not a verdict: coverage comes and goes on a bike, so unless
+ * Leaflet itself is missing we keep probing and restore the street map when
+ * tiles answer again. */
+function useCanvasFallback(note, recoverable) {
   if (leafletMap) { leafletMap.remove(); leafletMap = null; }
+  colorLines = [];
+  brakeDots = [];
+  hazardDots = [];
+  marker = startMarker = destMarker = null;
+
   ui.map.hidden = true;
   ui.canvas.hidden = false;
   ui.mapNote.textContent = note;
   drawCanvasTrack();
+
+  if (recoverable && tileProbeTimer === null) {
+    tileProbeTimer = setTimeout(probeTiles, TILE_RETRY_MS);
+  }
+}
+
+function probeTiles() {
+  tileProbeTimer = null;
+  const probe = new Image();
+  probe.onload = restoreLeafletMap;
+  probe.onerror = () => { tileProbeTimer = setTimeout(probeTiles, TILE_RETRY_MS); };
+  probe.src = TILE_PROBE_URL;
+}
+
+function restoreLeafletMap() {
+  initMap();
+  if (leafletMap === null) return;
+  ui.mapNote.textContent = '';
+  rebuildTrail();
+}
+
+/* The trail lives in `track`, not in the Leaflet layers, so it can be redrawn
+ * from scratch after a fallback without losing any of the ride. */
+function rebuildTrail() {
+  let segment = null;
+  let segmentKind = null;
+
+  track.forEach((point, i) => {
+    const latlng = [point.lat, point.lon];
+    if (point.kind === segmentKind && segment !== null) {
+      segment.addLatLng(latlng);
+      return;
+    }
+    // Seed a new segment from the previous point so colours butt together
+    // instead of leaving a gap at every transition.
+    const seed = i > 0 ? [[track[i - 1].lat, track[i - 1].lon], latlng] : [latlng];
+    segment = L.polyline(seed, trailStyle(point.kind)).addTo(leafletMap);
+    colorLines.push(segment);
+    segmentKind = point.kind;
+    if (point.kind === 'brake' && i > 0) addBrakeDot(point.lat, point.lon);
+  });
+
+  hazards.forEach((hazard) => addHazardDot(hazard.lat, hazard.lon, hazard.label));
+
+  const head = track[track.length - 1];
+  if (head) {
+    marker.setLatLng([head.lat, head.lon]);
+    startMarker = L.circleMarker([track[0].lat, track[0].lon], {
+      radius: 5, color: '#fff', fillColor: '#8b949e', fillOpacity: 1, weight: 2,
+    }).addTo(leafletMap).bindTooltip('Start', { direction: 'top' });
+    leafletMap.setView([head.lat, head.lon], 15);
+  }
+  if (lastSample) ensureDestMarker(lastSample);
+}
+
+function trailStyle(kind) {
+  return {
+    color: TRAIL[kind] || TRAIL.normal,
+    weight: kind === 'brake' ? 5 : 4,
+    opacity: 0.95,
+    lineJoin: 'round',
+    lineCap: 'round',
+  };
 }
 
 function projectFactory(points) {
@@ -195,7 +279,6 @@ function addHazardDot(lat, lon, label) {
 }
 
 function appendColourSegment(lat, lon, kind) {
-  const color = TRAIL[kind] || TRAIL.normal;
   const lastLine = colorLines[colorLines.length - 1];
   const lastPoint = track[track.length - 1];
   if (lastLine && lastPoint && lastPoint.kind === kind) {
@@ -203,17 +286,11 @@ function appendColourSegment(lat, lon, kind) {
     return;
   }
   const latlngs = lastPoint ? [[lastPoint.lat, lastPoint.lon], [lat, lon]] : [[lat, lon]];
-  const line = L.polyline(latlngs, {
-    color,
-    weight: kind === 'brake' ? 5 : 4,
-    opacity: 0.95,
-    lineJoin: 'round',
-    lineCap: 'round',
-  }).addTo(leafletMap);
-  colorLines.push(line);
+  colorLines.push(L.polyline(latlngs, trailStyle(kind)).addTo(leafletMap));
 }
 
 function pushTrackSample(s) {
+  lastSample = s;
   if (!s.gps_valid || (!s.latitude && !s.longitude)) return;
 
   const kind = trailKind(s);
@@ -276,7 +353,9 @@ function appendLog(message) {
       `<div><span class="log-who">Rider</span> <span class="log-rider">${escapeHtml(message.rider || '')}</span></div>`
       + `<div><span class="log-who">Apex</span> <span class="log-apex">${escapeHtml(message.apex || '')}</span></div>`;
     if (message.intent === 'hazard' && message.latitude) {
-      addHazardDot(message.latitude, message.longitude, message.hazard_type || 'hazard');
+      const label = message.hazard_type || 'hazard';
+      hazards.push({ lat: message.latitude, lon: message.longitude, label });
+      addHazardDot(message.latitude, message.longitude, label);
     }
   } else {
     body.innerHTML = `<div class="log-event-text">${escapeHtml(message.text || '')}</div>`;
