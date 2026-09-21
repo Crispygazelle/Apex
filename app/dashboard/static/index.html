@@ -3,107 +3,142 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>APEX telemetry</title>
+<title>APEX · live ride</title>
 <link rel="stylesheet" href="/static/style.css">
 <!-- Leaflet is optional. The helmet is frequently offline, so app.js falls
      back to drawing the track on a canvas when tiles are unreachable. -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 </head>
-<body>
+<body class="cockpit">
 
 <header>
   <div class="brand">
     <span class="mark">APEX</span>
-    <span id="helmet" class="muted">&mdash;</span>
+    <span id="helmet" class="chip">—</span>
+  </div>
+  <div class="mission">
+    <span id="route">—</span>
+    <span class="dot" aria-hidden="true"></span>
+    <span id="destination">—</span>
   </div>
   <div class="header-right">
-    <span id="ride" class="muted">—</span>
+    <span id="clock" class="clock">T+00:00</span>
     <span id="state" class="pill">starting</span>
     <span id="link" class="pill link-down">offline</span>
+    <span id="tileSource" class="pill">tiles</span>
+    <span id="voiceArmed" class="pill" hidden>voice</span>
+    <button id="directorToggle" type="button" class="ghost" hidden>Director</button>
   </div>
 </header>
 
-<!-- Sits above the gauges and spans the full width: during a countdown this is
-     the only thing on the page that matters. -->
-<div id="alert" class="alert" hidden>
-  <div class="alert-text">
-    <strong id="alertTitle">CRASH DETECTED</strong>
-    <span id="alertDetail" class="small"></span>
+<div id="stage" class="stage">
+  <div id="map"></div>
+  <canvas id="trackCanvas" hidden></canvas>
+  <p id="mapNote" class="map-note muted small"></p>
+  <div class="trail-legend" aria-hidden="true">
+    <span><i class="swatch fast"></i> fast</span>
+    <span><i class="swatch normal"></i> cruise</span>
+    <span><i class="swatch brake"></i> brake</span>
   </div>
-  <button id="alertCancel" type="button">I'm OK &mdash; cancel</button>
+
+  <div id="nowBanner" class="now-banner" hidden></div>
+
+  <aside class="rail left">
+    <section class="glass speed-card">
+      <h2>Speed</h2>
+      <div class="speed-readout">
+        <span id="speed">0</span><small>km/h</small>
+      </div>
+      <canvas id="speedSpark" class="spark" width="240" height="36"></canvas>
+      <div class="meta-row">
+        <span>max <b id="maxSpeed">0</b></span>
+        <span id="speedKind">cruise</span>
+      </div>
+    </section>
+
+    <section class="glass">
+      <h2>Lean</h2>
+      <svg viewBox="-60 -50 120 80" class="lean">
+        <line class="horizon" x1="-50" y1="0" x2="50" y2="0"></line>
+        <g id="leanBike">
+          <line class="bike" x1="0" y1="0" x2="0" y2="-38"></line>
+          <circle class="bike-head" cx="0" cy="-42" r="5"></circle>
+        </g>
+      </svg>
+      <div class="metric-value"><span id="lean">0.0</span><small>deg</small></div>
+    </section>
+
+    <section class="glass">
+      <h2>G-force</h2>
+      <div class="metric-value tight"><span id="gforce">1.00</span><small>g</small></div>
+      <canvas id="gSpark" class="spark" width="240" height="36"></canvas>
+      <div class="meta-row"><span>peak <b id="maxG">0.00</b></span></div>
+    </section>
+  </aside>
+
+  <aside class="rail right">
+    <section class="glass remain-card">
+      <h2>Remaining</h2>
+      <div class="remain-value" id="remaining">—</div>
+      <div class="meta-row">
+        <span>eta <b id="eta">—</b></span>
+        <span id="distance">0.00</span> km
+      </div>
+    </section>
+
+    <section class="glass">
+      <h2>Fusion</h2>
+      <dl class="compact">
+        <dt>Mode</dt><dd id="fusion">init</dd>
+        <dt>Sats</dt><dd id="sats">0</dd>
+        <dt>Conf.</dt><dd><span id="posConf">0</span>%</dd>
+        <dt>Heading</dt><dd><span id="heading">0</span>° <span id="cardinal" class="muted">N</span></dd>
+        <dt>Altitude</dt><dd><span id="altitude">0</span> m</dd>
+        <dt>Grade</dt><dd><span id="gradient">0.0</span>%</dd>
+        <dt>Long. a</dt><dd><span id="longAccel">0.00</span></dd>
+      </dl>
+      <p id="coords" class="mono coords">—</p>
+    </section>
+  </aside>
 </div>
 
-<main>
-  <section class="panel speed-panel">
-    <svg viewBox="0 0 200 120" class="gauge">
-      <path class="gauge-track" d="M20 110 A 80 80 0 0 1 180 110"></path>
-      <path id="speedArc" class="gauge-fill" d="M20 110 A 80 80 0 0 1 180 110"></path>
-    </svg>
-    <div class="speed-readout">
-      <span id="speed">0</span><small>km/h</small>
-    </div>
-    <div class="speed-sub">
-      <span>max <b id="maxSpeed">0</b> km/h</span>
-      <span><b id="fusion">init</b></span>
-    </div>
-  </section>
-
-  <section class="panel">
-    <h2>Lean</h2>
-    <svg viewBox="-60 -50 120 80" class="lean">
-      <line class="horizon" x1="-50" y1="0" x2="50" y2="0"></line>
-      <g id="leanBike">
-        <line class="bike" x1="0" y1="0" x2="0" y2="-38"></line>
-        <circle class="bike-head" cx="0" cy="-42" r="5"></circle>
-      </g>
-    </svg>
-    <div class="metric-value"><span id="lean">0.0</span><small>deg</small></div>
-  </section>
-
-  <section class="panel">
-    <h2>G-force</h2>
-    <svg viewBox="0 0 200 120" class="gauge">
-      <path class="gauge-track" d="M20 110 A 80 80 0 0 1 180 110"></path>
-      <path id="gArc" class="gauge-fill g-fill" d="M20 110 A 80 80 0 0 1 180 110"></path>
-    </svg>
-    <div class="metric-value"><span id="gforce">1.00</span><small>g</small></div>
-    <div class="speed-sub"><span>peak <b id="maxG">0.00</b> g</span></div>
-  </section>
-
-  <section class="panel wide map-panel">
-    <h2>Position</h2>
-    <div class="trail-legend" aria-hidden="true">
-      <span><i class="swatch fast"></i> fast</span>
-      <span><i class="swatch normal"></i> normal</span>
-      <span><i class="swatch brake"></i> braking</span>
-    </div>
-    <div id="map"></div>
-    <canvas id="trackCanvas" hidden></canvas>
-    <p id="mapNote" class="muted small"></p>
-  </section>
-
-  <section class="panel stats">
-    <h2>Ride</h2>
-    <dl>
-      <dt>Distance</dt><dd><span id="distance">0.000</span> km</dd>
-      <dt>Remaining</dt><dd><span id="remaining">—</span></dd>
-      <dt>Gradient</dt><dd><span id="gradient">0.0</span> %</dd>
-      <dt>Altitude</dt><dd><span id="altitude">0</span> m</dd>
-      <dt>Heading</dt><dd><span id="heading">0</span>&deg;</dd>
-      <dt>Longitudinal</dt><dd><span id="longAccel">0.00</span> m/s&sup2;</dd>
-      <dt>Satellites</dt><dd><span id="sats">0</span></dd>
-      <dt>Position conf.</dt><dd><span id="posConf">0</span> %</dd>
-      <dt>Coordinates</dt><dd class="mono"><span id="coords">—</span></dd>
-    </dl>
-  </section>
-
-  <section class="panel wide log-panel">
+<section id="filmstrip" class="filmstrip">
+  <div class="film-head">
     <h2>Voice &amp; events</h2>
-    <div id="rideLog" class="ride-log" aria-live="polite">
-      <p class="log-empty muted small">Waiting for the rider…</p>
-    </div>
-  </section>
-</main>
+    <span id="nowLine" class="now-line muted">waiting for the rider</span>
+  </div>
+  <div id="rideLog" class="ride-log" aria-live="polite">
+    <p class="log-empty muted small">Waiting for the rider…</p>
+  </div>
+</section>
+
+<section id="directorPanel" class="director-panel" hidden>
+  <div class="director-row">
+    <h2>Demo director</h2>
+    <span class="muted small">D toggle · Space next beat</span>
+  </div>
+  <div class="director-group">
+    <button type="button" data-demo="pothole">Pothole</button>
+    <button type="button" data-demo="brake">Hard brake</button>
+    <button type="button" data-demo="crash">Crash rehearsal</button>
+  </div>
+  <div id="directorPhrases" class="director-group phrases"></div>
+  <p id="directorNote" class="muted small"></p>
+</section>
+
+<div id="alert" class="alert" hidden>
+  <div class="alert-count" id="alertCount" hidden></div>
+  <strong id="alertTitle">CRASH DETECTED</strong>
+  <span id="alertDetail" class="small"></span>
+  <button id="alertCancel" type="button">I'm OK — cancel</button>
+</div>
+
+<div id="recap" class="recap" hidden>
+  <p class="recap-kicker">Ride complete</p>
+  <h1 id="recapTitle">Arrived</h1>
+  <dl id="recapStats" class="recap-stats"></dl>
+  <button id="recapDismiss" type="button">Keep the map</button>
+</div>
 
 <footer>
   <span id="diag" class="muted small">waiting for telemetry…</span>

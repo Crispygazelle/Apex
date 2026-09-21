@@ -196,11 +196,15 @@ class RideDirector:
         event_log: EventLog,
         hub: TelemetryHub | None = None,
         voice: VoiceAssistant | None = None,
+        voice_script: list[tuple[float, str]] | None = None,
     ) -> None:
         self.coordinator = coordinator
         self.event_log = event_log
         self.hub = hub
         self.voice = voice
+        # Keyed on odometer distance rather than elapsed time so the dialogue
+        # lands at the same places on the route however fast the ride is played.
+        self.voice_script = list(voice_script or ())
         self.detector = ThresholdDetector()
         self._fired_voice: set[int] = set()
         self._voice_busy = False
@@ -228,13 +232,12 @@ class RideDirector:
         await self._emit(entry)
 
     async def _maybe_voice(self, sample: RideSample) -> None:
-        if self.voice is None or self._voice_busy:
+        if self.voice is None or self._voice_busy or not self.voice_script:
             return
-        sim = self.coordinator.simulator
-        if sim is None:
-            return
-        distance = sim.distance_m
-        for index, (at_m, text) in enumerate(sim.profile.voice_script):
+        # The fused odometer, not simulator ground truth: a replay has no
+        # simulator, and this is the distance the rider is actually shown.
+        distance = sample.metrics.distance_m
+        for index, (at_m, text) in enumerate(self.voice_script):
             if index in self._fired_voice or distance < at_m:
                 continue
             self._fired_voice.add(index)

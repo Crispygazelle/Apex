@@ -123,6 +123,11 @@ class DashboardConfig:
     enabled: bool = True
     host: str = "0.0.0.0"
     port: int = 8000
+    # Pre-fetched basemap tiles, so the map works with no network at all.
+    # Populate with `python -m scripts.fetch_tiles <route.gpx>`; empty disables serving.
+    tile_cache_dir: str = "config/tiles"
+    tile_min_zoom: int = 13
+    tile_max_zoom: int = 16
 
 
 @dataclass

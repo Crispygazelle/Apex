@@ -53,6 +53,8 @@ def test_health_reports_the_ride(client: TestClient) -> None:
     # rider rather than the helmet identity.
     assert body["helmet_id"] == "helmet01"
     assert body["sensor_backend"] == "sim"
+    assert body["tile_source"] in {"cached", "none"}
+    assert body["voice"] is False
 
 
 def test_state_returns_the_latest_sample(client: TestClient) -> None:
@@ -109,7 +111,10 @@ def test_ride_query_is_501_when_storage_is_disabled(client: TestClient) -> None:
 
 def test_index_and_assets_are_served(client: TestClient) -> None:
     assert client.get("/").status_code == 200
-    assert "APEX" in client.get("/").text
+    html = client.get("/").text
+    assert "APEX" in html
+    assert 'class="cockpit"' in html
+    assert 'id="recap"' in html
     assert client.get("/static/app.js").status_code == 200
     assert client.get("/static/style.css").status_code == 200
 

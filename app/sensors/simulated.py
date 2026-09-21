@@ -141,6 +141,9 @@ class RideSimulator:
         self._yaw_rate = 0.0
         self._lean_deg = 0.0
         self._roll_rate = 0.0
+        # Set by inject_brake; overrides the zone target while it lasts.
+        self._brake_until_t = -1.0
+        self._brake_target_mps = 0.0
 
     @property
     def distance_m(self) -> float:
@@ -155,6 +158,20 @@ class RideSimulator:
     @property
     def route_length_m(self) -> float:
         return 0.0 if self._path is None else self._path.length_m
+
+    # Mirrors `Recording`, so the coordinator and the demo director can take a
+    # route from either without asking which one they have.
+    @property
+    def route_name(self) -> str:
+        return self.profile.route_name
+
+    @property
+    def destination_name(self) -> str:
+        return self.profile.destination_name
+
+    @property
+    def voice_script(self) -> list[tuple[float, str]]:
+        return self.profile.voice_script
 
     # --- analytic profile -------------------------------------------------
 
@@ -207,6 +224,8 @@ class RideSimulator:
         if u <= 0.0:
             return 0.0
         zone = self._zone_speed(distance_m)
+        if t < self._brake_until_t:
+            zone = min(zone, self._brake_target_mps)
         spool = min(1.0, u / max(p.spool_up_s, 1e-3))
         return zone * spool
 
@@ -365,6 +384,41 @@ class RideSimulator:
         if t < self.profile.gps_lock_s:
             return False
         return not any(start <= t <= end for start, end in self.profile.gps_dropouts)
+
+    # --- live injection, for driving a demo from the dashboard --------------
+
+    def inject_pothole(self, lead_m: float = 6.0) -> float:
+        """Put a pothole just ahead of the front wheel. Returns where."""
+        at_m = self._distance + max(lead_m, 1.0)
+        self.profile.potholes_m.append(at_m)
+        return at_m
+
+    @property
+    def supports_speed_injection(self) -> bool:
+        """Only a path-following ride can be told to brake.
+
+        The analytic profile derives acceleration by differentiating its own
+        speed curve, so clamping that curve mid-ride would hand the IMU a
+        step change and several hundred g. Path mode runs the target through
+        `max_brake_mps2` instead, which is a brake a motorcycle could apply.
+        """
+        return self._path is not None
+
+    def inject_brake(self, target_mps: float = 3.0, duration_s: float = 3.0) -> None:
+        """Demand a hard stop for a few seconds, wherever the bike currently is.
+
+        Expressed as a speed target rather than a deceleration so the existing
+        accel limits still shape it.
+        """
+        if not self.supports_speed_injection:
+            raise ValueError("this ride profile has no path to brake along")
+        self._brake_until_t = self._t + max(duration_s, 0.5)
+        self._brake_target_mps = max(target_mps, 0.0)
+
+    def inject_crash(self) -> float:
+        """Schedule the scripted impact for right now. Returns the sim time."""
+        self.profile.crash_at_s = self._t
+        return self._t
 
     def pothole_force(self) -> tuple[float, float]:
         """Body-frame accel bump if the wheel is on a scripted pothole."""

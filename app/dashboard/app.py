@@ -33,6 +33,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
+# Tiles never change, so let the browser keep them for the length of a demo.
+TILE_CACHE_HEADER = "public, max-age=604800, immutable"
 
 
 def create_app(
@@ -99,6 +101,70 @@ def create_app(
             "count": len(window[::step]),
             "buffer_span_s": round(coordinator.buffer.span_seconds(), 2),
             "samples": [sample.to_dict() for sample in window[::step]],
+        }
+
+    tile_dir = Path(coordinator.config.dashboard.tile_cache_dir or "")
+    sample_tile = next(iter(sorted(tile_dir.glob("*/*/*.png"))), None) if tile_dir.is_dir() else None
+    tiles_available = sample_tile is not None
+    # Tile paths are stable, so a browser that cached them once will keep them
+    # even after the cache on disk is refilled from a different provider. The
+    # token changes when the files do, which is the only thing that reliably
+    # busts an already-warm browser cache.
+    tile_version = int(sample_tile.stat().st_mtime) if sample_tile is not None else 0
+    if tiles_available:
+        logger.info("Serving offline map tiles from %s (v%d)", tile_dir, tile_version)
+
+    @app.get("/tiles/{zoom}/{x}/{y}.png")
+    async def tile(zoom: int, x: int, y: int) -> FileResponse:
+        """One cached map tile.
+
+        Strictly cache-only: a demo should not discover at the worst moment
+        that the map needs the internet. Gaps are handled by the client, which
+        upscales the deepest cached zoom rather than showing holes.
+        """
+        if not tiles_available:
+            raise HTTPException(status_code=404, detail="no tile cache configured")
+        # Ints from the path already rule out traversal, but resolve anyway so
+        # the check is on the real path rather than on how it was spelled.
+        candidate = (tile_dir / str(zoom) / str(x) / f"{y}.png").resolve()
+        if tile_dir.resolve() not in candidate.parents or not candidate.is_file():
+            raise HTTPException(status_code=404, detail="tile not cached")
+        # Esri serves JPEG; we keep the .png path so the client URL stays
+        # stable. The browser sniffs the magic bytes, but sending the real
+        # type avoids a console warning on every tile.
+        with candidate.open("rb") as handle:
+            magic = handle.read(3)
+        media = "image/jpeg" if magic == b"\xff\xd8\xff" else "image/png"
+        return FileResponse(
+            candidate,
+            media_type=media,
+            headers={"Cache-Control": TILE_CACHE_HEADER},
+        )
+
+    @app.get("/api/map")
+    async def map_config() -> dict[str, Any]:
+        """Tells the client whether to use local tiles or reach for OSM."""
+        dashboard = coordinator.config.dashboard
+        # A known-good tile path, so the client can test the layer without
+        # guessing coordinates that may not be in the cache.
+        probe = ""
+        if sample_tile is not None:
+            zoom, x = sample_tile.parent.parent.name, sample_tile.parent.name
+            probe = f"/tiles/{zoom}/{x}/{sample_tile.stem}.png"
+        return {
+            "tiles_cached": tiles_available,
+            # Cached is the demo default. Remote CARTO is only advertised when
+            # this checkout has no tile cache at all; the client must not reach
+            # the network while local tiles exist.
+            "tile_source": "cached" if tiles_available else "remote",
+            "tile_url": (
+                f"/tiles/{{z}}/{{x}}/{{y}}.png?v={tile_version}" if tiles_available else ""
+            ),
+            "probe_url": f"{probe}?v={tile_version}" if probe else "",
+            "tile_version": tile_version,
+            "attribution": "© Esri · © OpenStreetMap contributors",
+            "min_zoom": dashboard.tile_min_zoom,
+            "max_zoom": dashboard.tile_max_zoom,
         }
 
     @app.get("/api/events")
@@ -184,18 +250,96 @@ def create_app(
         finally:
             hub.unregister(websocket)
 
+    # --- demo director ----------------------------------------------------
+    #
+    # Physics injections reach into the simulator, so they only exist on a
+    # simulated ride. A replay is a fixed record of readings and a live helmet
+    # is a motorcycle; fabricating a pothole in either would be a lie about
+    # where the number came from. Speaking to the assistant works everywhere,
+    # because that is a real command down the real intent path.
+
+    def _require_simulator() -> Any:
+        simulator = coordinator.simulator
+        if simulator is None:
+            raise HTTPException(
+                status_code=409,
+                detail="event injection needs a simulated ride; this node is "
+                f"running {'a replay' if coordinator.recording else 'real sensors'}",
+            )
+        return simulator
+
+    @app.post("/api/demo/pothole")
+    async def demo_pothole() -> dict[str, Any]:
+        """Drop a pothole just ahead, so the g-spike lands while you narrate."""
+        at_m = _require_simulator().inject_pothole()
+        logger.info("Demo: pothole injected at %.0f m", at_m)
+        return {"injected": "pothole", "at_m": round(at_m, 1)}
+
+    @app.post("/api/demo/brake")
+    async def demo_brake(
+        target_kmh: float = Query(default=10.0, ge=0.0, le=80.0),
+        duration_s: float = Query(default=3.0, gt=0.0, le=15.0),
+    ) -> dict[str, Any]:
+        """Demand a hard stop now, for the red trail and the brake marker."""
+        try:
+            _require_simulator().inject_brake(
+                target_mps=target_kmh / 3.6, duration_s=duration_s
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        logger.info("Demo: braking to %.0f km/h for %.1fs", target_kmh, duration_s)
+        return {"injected": "brake", "target_kmh": target_kmh, "duration_s": duration_s}
+
+    @app.post("/api/demo/crash")
+    async def demo_crash() -> dict[str, Any]:
+        """Rehearse the impact and the SOS countdown. Cancellable as usual."""
+        at_s = _require_simulator().inject_crash()
+        logger.warning("Demo: crash rehearsal triggered at t+%.1fs", at_s)
+        return {"injected": "crash", "at_s": round(at_s, 1)}
+
+    @app.post("/api/demo/say")
+    async def demo_say(text: str = Query(min_length=1, max_length=200)) -> dict[str, Any]:
+        """Put a phrase through wake word, intent parsing and the real handler."""
+        if voice is None:
+            raise HTTPException(status_code=501, detail="the voice layer is disabled")
+        reply = await voice.hear(text)
+        return {"rider": text, "apex": reply}
+
+    @app.get("/api/demo")
+    async def demo_capabilities() -> dict[str, Any]:
+        """What the director panel should offer on this particular node."""
+        simulator = coordinator.simulator
+        return {
+            "can_inject": simulator is not None,
+            "can_brake": simulator is not None and simulator.supports_speed_injection,
+            "can_speak": voice is not None,
+            "phrases": [
+                "hey apex what's my speed",
+                "hey apex how far am I to the destination",
+                "hey apex log a pothole here",
+                "hey apex status report",
+            ],
+        }
+
     @app.get("/api/health")
     async def health() -> dict[str, Any]:
-        sim = coordinator.simulator
+        route = coordinator.sensor_set.route
+        recording = coordinator.recording
+        backend = coordinator.config.node.sensor_backend
         return {
             "status": "ok",
             "helmet_id": coordinator.config.node.helmet_id,
             "ride_id": coordinator.ride_id,
             "system_state": coordinator.system_state.value,
-            "sensor_backend": coordinator.config.node.sensor_backend,
+            # A replay is neither the simulator nor the hardware, and calling it
+            # either would misrepresent where the numbers came from.
+            "sensor_backend": "replay" if recording is not None else backend,
+            "replay_speed": recording.speed if recording is not None else 0.0,
             "samples": len(coordinator.buffer),
-            "route": sim.profile.route_name if sim is not None else "",
-            "destination": sim.profile.destination_name if sim is not None else "",
+            "route": route.route_name if route is not None else "",
+            "destination": route.destination_name if route is not None else "",
+            "tile_source": "cached" if tiles_available else "none",
+            "voice": voice is not None,
         }
 
     if STATIC_DIR.exists():

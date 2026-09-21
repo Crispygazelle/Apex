@@ -80,6 +80,11 @@ dashboard:
   enabled: true
   host: 0.0.0.0
   port: 8000
+  # Offline map tiles. Refill with:
+  #   python -m scripts.fetch_tiles config/rides/nagpur-sitabuldi-airport.gpx
+  tile_cache_dir: config/tiles
+  tile_min_zoom: 13
+  tile_max_zoom: 16
 
 safety:
   enabled: true
