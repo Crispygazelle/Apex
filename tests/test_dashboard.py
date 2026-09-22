@@ -20,6 +20,8 @@ def sample(timestamp: float, speed_kmh: float = 50.0) -> RideSample:
             timestamp=timestamp,
             latitude=12.9716,
             longitude=77.5946,
+            x_m=250.0,
+            y_m=-80.0,
             altitude_m=920.0,
             speed_mps=speed_kmh / 3.6,
         ),
@@ -53,6 +55,8 @@ def test_health_reports_the_ride(client: TestClient) -> None:
     # rider rather than the helmet identity.
     assert body["helmet_id"] == "helmet01"
     assert body["sensor_backend"] == "sim"
+    assert body["tile_source"] in {"cached", "none"}
+    assert body["voice"] is False
 
 
 def test_state_returns_the_latest_sample(client: TestClient) -> None:
@@ -60,6 +64,8 @@ def test_state_returns_the_latest_sample(client: TestClient) -> None:
     assert body["ride_id"] == "ride-test"
     assert body["satellites"] == 11
     assert body["speed_kmh"] == pytest.approx(49.95)
+    assert body["east_m"] == 250.0
+    assert body["north_m"] == -80.0
 
 
 def test_state_is_503_before_any_telemetry(config: AppConfig) -> None:
@@ -109,7 +115,13 @@ def test_ride_query_is_501_when_storage_is_disabled(client: TestClient) -> None:
 
 def test_index_and_assets_are_served(client: TestClient) -> None:
     assert client.get("/").status_code == 200
-    assert "APEX" in client.get("/").text
+    html = client.get("/").text
+    assert "APEX" in html
+    assert 'class="cockpit"' in html
+    assert 'id="recap"' in html
+    assert 'id="page-dynamics"' in html
+    assert 'data-page="dynamics"' in html
+    assert 'id="filmstrip"' in html
     assert client.get("/static/app.js").status_code == 200
     assert client.get("/static/style.css").status_code == 200
 

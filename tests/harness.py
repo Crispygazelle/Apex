@@ -20,9 +20,10 @@ from dataclasses import dataclass, field
 
 from app.config import AppConfig
 from app.geo import haversine_m
-from app.models import FusionMode, RideSample
+from app.models import FusionMode, RideSample, SensorReading
 from app.pipeline.processor import Processor
 from app.processing.synchronization import FrameSynchronizer
+from app.sensors.recording import Recording, ReplayGps, ReplayImu
 from app.sensors.simulated import RideProfile, RideSimulator, SimulatedGps, SimulatedImu, TrueState
 
 
@@ -43,6 +44,9 @@ class VirtualClock:
 class RideResult:
     samples: list[RideSample] = field(default_factory=list)
     truth: list[TrueState] = field(default_factory=list)
+    # Raw sensor output, in the order the pipeline saw it. Kept so a test can
+    # capture a ride to a recording and replay it.
+    readings: list[SensorReading] = field(default_factory=list)
     processor: Processor | None = None
     simulator: RideSimulator | None = None
 
@@ -100,8 +104,12 @@ def run_offline_ride(
     duration_s: float = 90.0,
     *,
     profile: RideProfile | None = None,
+    recording: Recording | None = None,
 ) -> RideResult:
     """Replay a synthetic ride through the real pipeline on a virtual clock."""
+    if recording is not None:
+        return _run_recorded_ride(config, recording)
+
     clock = VirtualClock()
     simulator = RideSimulator(profile or RideProfile())
 
@@ -137,12 +145,14 @@ def run_offline_ride(
         if reading is not None:
             truth_by_key[(reading.timestamp, reading.source)] = simulator.state_at(elapsed)
             synchronizer.push(reading)
+            result.readings.append(reading)
 
         if elapsed >= next_gps:
             fix = gps.read()
             if fix is not None:
                 truth_by_key[(fix.timestamp, fix.source)] = simulator.state_at(elapsed)
                 synchronizer.push(fix)
+                result.readings.append(fix)
             next_gps += gps_period
 
         pump()
@@ -155,6 +165,49 @@ def run_offline_ride(
         if sample is not None and reference is not None:
             result.samples.append(sample)
             result.truth.append(reference)
+
+    imu.close()
+    gps.close()
+    return result
+
+
+def _run_recorded_ride(config: AppConfig, recording: Recording) -> RideResult:
+    """Drive the pipeline from a recording instead of a simulator.
+
+    There is no ground truth here: a recording is the input, and what is being
+    checked is that interpreting it a second time gives the same ride. Readings
+    are merged by timestamp before being fed in, because a 100 Hz IMU and a
+    10 Hz GPS drained independently would arrive wildly out of order and the
+    reorder window would legitimately discard the stragglers.
+    """
+    clock = VirtualClock()
+    imu = ReplayImu(recording, time_source=clock)
+    gps = ReplayGps(recording, time_source=clock)
+    imu.open()
+    gps.open()
+
+    processor = Processor(config, ride_id="replay-ride")
+    synchronizer = FrameSynchronizer(config.fusion.reorder_window_s)
+    result = RideResult(processor=processor)
+
+    for sensor in (imu, gps):
+        while not sensor.exhausted:
+            reading = sensor.read()
+            if reading is not None:
+                result.readings.append(reading)
+    result.readings.sort(key=lambda item: item.timestamp)
+
+    for reading in result.readings:
+        synchronizer.push(reading)
+        for ordered in synchronizer.drain():
+            sample = processor.process(ordered)
+            if sample is not None:
+                result.samples.append(sample)
+
+    for ordered in synchronizer.drain(flush=True):
+        sample = processor.process(ordered)
+        if sample is not None:
+            result.samples.append(sample)
 
     imu.close()
     gps.close()

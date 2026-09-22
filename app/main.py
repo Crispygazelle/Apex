@@ -4,6 +4,7 @@
     python -m app.main --duration 30        # stop after 30 seconds
     python -m app.main --backend hardware   # talk to the real sensors on a Pi
     python -m app.main --dashboard          # serve the web dashboard
+    python -m app.main --dashboard --demo-sprint   # ~90 s highlight reel
     python -m app.main --storage            # persist to InfluxDB
 
 Storage, streaming, the dashboard, and the voice layer all attach to the
@@ -27,7 +28,13 @@ from app.models import RideSample
 from app.pipeline.coordinator import Coordinator
 from app.pipeline.events import EventLog, RideDirector
 from app.safety.monitor import SafetyMonitor
-from app.sensors.demo import nagpur_airport_profile
+from app.sensors.demo import nagpur_airport_profile, nagpur_sprint_profile
+from app.sensors.recording import (
+    RECORDED_SOURCES,
+    RecordingMeta,
+    RideRecorder,
+    load_recording,
+)
 from app.sensors.simulated import RideProfile, RideSimulator
 from app.storage.batch_writer import BatchWriter
 from app.storage.influxdb import InfluxWriter
@@ -64,6 +71,41 @@ def build_parser() -> argparse.ArgumentParser:
             "script a crash this many seconds into a simulated ride, to rehearse "
             "detection and the SOS path without crashing a motorcycle"
         ),
+    )
+    parser.add_argument(
+        "--demo-sprint",
+        action="store_true",
+        help=(
+            "use the ~90 s Sitabuldi highlight instead of the full airport ride "
+            "(sim backend only; ignored on hardware and replay)"
+        ),
+    )
+    parser.add_argument(
+        "--record",
+        default=None,
+        metavar="PATH",
+        help=(
+            "append raw IMU and GPS readings to an NDJSON file for later replay "
+            "(audio is never recorded)"
+        ),
+    )
+    parser.add_argument(
+        "--replay",
+        default=None,
+        metavar="PATH",
+        help="replay a recording through the real fusion pipeline instead of reading sensors",
+    )
+    parser.add_argument(
+        "--replay-speed",
+        type=float,
+        default=1.0,
+        metavar="X",
+        help="replay faster than real time, e.g. 8 for an eight-minute ride in one",
+    )
+    parser.add_argument(
+        "--replay-loop",
+        action="store_true",
+        help="restart the recording when it ends, for an unattended demo loop",
     )
     parser.add_argument("--quiet", action="store_true", help="hide the live telemetry line")
     parser.add_argument("--log-level", default=None, help="override node.log_level")
@@ -166,11 +208,15 @@ class ApexNode:
     reporter: ConsoleReporter | None = None
     event_log: EventLog | None = None
     director: RideDirector | None = None
+    recorder: RideRecorder | None = None
     _server_task: asyncio.Task[None] | None = field(default=None, init=False)
     _server: Any = field(default=None, init=False)
 
     async def start_services(self) -> None:
         """Bring up storage, safety, and the dashboard before the ride begins."""
+        if self.recorder is not None:
+            self.recorder.open()
+
         if self.batch_writer is not None:
             await self.batch_writer.start()
 
@@ -238,6 +284,10 @@ class ApexNode:
         if self.batch_writer is not None:
             await self.batch_writer.stop()
 
+        # Last, so a reading that arrived during shutdown is still on disk.
+        if self.recorder is not None:
+            self.recorder.close()
+
     def summary(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"pipeline": self.coordinator.stats()}
         if self.hub is not None:
@@ -248,32 +298,89 @@ class ApexNode:
             payload["safety"] = self.safety.stats()
         if self.voice is not None:
             payload["voice"] = self.voice.stats.as_dict()
+        if self.recorder is not None:
+            payload["recording"] = self.recorder.stats()
         return payload
 
 
+def _recording_meta(coordinator: Coordinator) -> RecordingMeta:
+    """Capture the route alongside the readings, so replay knows the destination."""
+    meta = RecordingMeta(ride_id=coordinator.ride_id)
+    simulator = coordinator.simulator
+    if simulator is not None:
+        meta.route_name = simulator.route_name
+        meta.destination_name = simulator.destination_name
+        meta.route_length_m = simulator.route_length_m
+        meta.voice_script = list(simulator.voice_script)
+        destination = simulator.destination
+        if destination is not None:
+            meta.destination_latitude, meta.destination_longitude = destination
+    return meta
+
+
 def build_node(
-    config: AppConfig, *, quiet: bool = False, simulate_crash_at: float | None = None
+    config: AppConfig,
+    *,
+    quiet: bool = False,
+    simulate_crash_at: float | None = None,
+    demo_sprint: bool = False,
+    replay_path: str | None = None,
+    replay_speed: float = 1.0,
+    replay_loop: bool = False,
+    record_path: str | None = None,
 ) -> ApexNode:
     """Wire the coordinator to whichever consumers the config enables."""
     simulator = None
-    if simulate_crash_at is not None and config.node.sensor_backend != "sim":
-        raise SystemExit("--simulate-crash requires --backend sim")
-    if config.node.sensor_backend == "sim":
-        if simulate_crash_at is not None:
-            simulator = RideSimulator(RideProfile(crash_at_s=simulate_crash_at))
-            logger.warning(
-                "Scripted crash at t+%.1fs; this is a rehearsal", simulate_crash_at
-            )
-        else:
-            simulator = RideSimulator(nagpur_airport_profile())
-            logger.info("Sim ride: %s", simulator.profile.route_name)
+    recording = None
+
+    if replay_path is not None:
+        if record_path is not None:
+            raise SystemExit("--record and --replay are mutually exclusive")
+        recording = load_recording(replay_path, speed=replay_speed, loop=replay_loop)
+        logger.info(
+            "Replaying %s: %.0fs of %s at %.2fx",
+            replay_path,
+            recording.duration_s,
+            recording.meta.route_name or "an unnamed route",
+            recording.speed,
+        )
+    else:
+        if simulate_crash_at is not None and config.node.sensor_backend != "sim":
+            raise SystemExit("--simulate-crash requires --backend sim")
+        if config.node.sensor_backend == "sim":
+            if demo_sprint:
+                profile = nagpur_sprint_profile()
+                if simulate_crash_at is not None:
+                    profile.crash_at_s = simulate_crash_at
+                    logger.warning(
+                        "Scripted crash at t+%.1fs on the highlight reel",
+                        simulate_crash_at,
+                    )
+                simulator = RideSimulator(profile)
+                logger.info("Sim ride (sprint): %s", simulator.profile.route_name)
+            elif simulate_crash_at is not None:
+                simulator = RideSimulator(RideProfile(crash_at_s=simulate_crash_at))
+                logger.warning(
+                    "Scripted crash at t+%.1fs; this is a rehearsal", simulate_crash_at
+                )
+            else:
+                simulator = RideSimulator(nagpur_airport_profile())
+                logger.info("Sim ride: %s", simulator.profile.route_name)
 
     # Voice needs the microphone even when sensors.mic.enabled is false in the
     # shipped config — that flag is the hardware default, not a voice disable.
     coordinator = Coordinator(
-        config, simulator=simulator, include_mic=config.voice.enabled
+        config,
+        simulator=simulator,
+        recording=recording,
+        include_mic=config.voice.enabled,
     )
     node = ApexNode(config=config, coordinator=coordinator)
+
+    if record_path is not None:
+        node.recorder = RideRecorder(record_path, _recording_meta(coordinator))
+        for source in RECORDED_SOURCES:
+            coordinator.subscribe_reading(source, node.recorder)
 
     if not quiet:
         node.reporter = ConsoleReporter()
@@ -305,12 +412,14 @@ def build_node(
         )
 
     if node.hub is not None:
+        route = coordinator.sensor_set.route
         node.event_log = EventLog()
         node.director = RideDirector(
             coordinator,
             event_log=node.event_log,
             hub=node.hub,
             voice=node.voice,
+            voice_script=route.voice_script if route is not None else None,
         )
         coordinator.subscribe_sample(node.director.on_sample)
         if node.voice is not None:
@@ -323,7 +432,16 @@ async def async_main(args: argparse.Namespace) -> int:
     config = resolve_config(args)
     configure_logging(config.node.log_level)
 
-    node = build_node(config, quiet=args.quiet, simulate_crash_at=args.simulate_crash)
+    node = build_node(
+        config,
+        quiet=args.quiet,
+        simulate_crash_at=args.simulate_crash,
+        demo_sprint=args.demo_sprint,
+        replay_path=args.replay,
+        replay_speed=args.replay_speed,
+        replay_loop=args.replay_loop,
+        record_path=args.record,
+    )
     coordinator = node.coordinator
 
     loop = asyncio.get_running_loop()

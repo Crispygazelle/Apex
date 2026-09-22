@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.sensors.gpx import load_gpx
+from app.sensors.path import RidePath
 from app.sensors.simulated import RideProfile
 
 GPX_PATH = (
@@ -66,5 +67,65 @@ def nagpur_airport_profile() -> RideProfile:
             (5300.0, "hey apex how far to the destination"),
             (7200.0, "hey apex what's my speed"),
             (11650.0, "hey apex how far am I to the destination"),
+        ],
+    )
+
+
+# First ~1.2 km of the same GPX: spool, purple, brake, pothole, voice, arrive.
+# Sized so a talk can see every beat before the room's attention moves on.
+SPRINT_LENGTH_M = 1180.0
+
+
+def clip_waypoints(
+    waypoints: list[tuple[float, float]], max_m: float
+) -> list[tuple[float, float]]:
+    """Keep the start of a polyline and stop on the road at `max_m`."""
+    path = RidePath(waypoints)
+    if path.length_m <= max_m:
+        return list(path.waypoints)
+    clipped: list[tuple[float, float]] = []
+    for point, distance in zip(path.waypoints, path.cum_m, strict=True):
+        if distance <= max_m:
+            clipped.append(point)
+            continue
+        clipped.append(path.point(max_m))
+        break
+    return clipped
+
+
+def nagpur_sprint_profile() -> RideProfile:
+    """A ~90 s highlight of the same Sitabuldi start, for a first impression."""
+    waypoints = clip_waypoints(load_gpx(GPX_PATH), SPRINT_LENGTH_M)
+    start_lat, start_lon = waypoints[0]
+    return RideProfile(
+        start_latitude=start_lat,
+        start_longitude=start_lon,
+        start_altitude_m=310.0,
+        waypoints=waypoints,
+        gps_dropouts=[],
+        gps_lock_s=4.0,
+        stationary_s=3.0,
+        spool_up_s=4.0,
+        hill_amplitude_m=8.0,
+        hill_period_s=90.0,
+        brake_at_s=1e9,
+        speed_zones=[
+            (0.0, 80.0, 12.0),
+            (80.0, 500.0, 25.0),  # purple trail
+            (500.0, 540.0, 4.0),  # hard brake
+            (540.0, 1000.0, 18.0),
+            (1000.0, 30_000.0, 8.5),
+        ],
+        potholes_m=[620.0],
+        pothole_peak_g=2.45,
+        max_accel_mps2=2.8,
+        max_brake_mps2=7.8,
+        route_name="Sitabuldi → Ambazari approach",
+        destination_name="Ambazari approach",
+        voice_script=[
+            (90.0, "hey apex what's my speed"),
+            (400.0, "hey apex how far am I to the destination"),
+            (640.0, "hey apex log a pothole here"),
+            (1050.0, "hey apex how far am I to the destination"),
         ],
     )

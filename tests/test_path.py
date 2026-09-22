@@ -6,8 +6,15 @@ from pathlib import Path
 
 import pytest
 
+from app.config import AppConfig
 from app.geo import GeoOrigin, haversine_m
-from app.sensors.demo import GPX_PATH, nagpur_airport_profile
+from app.sensors.demo import (
+    GPX_PATH,
+    SPRINT_LENGTH_M,
+    clip_waypoints,
+    nagpur_airport_profile,
+    nagpur_sprint_profile,
+)
 from app.sensors.gpx import load_gpx
 from app.sensors.path import RidePath
 from app.sensors.simulated import RideProfile, RideSimulator
@@ -100,6 +107,36 @@ def test_demo_profile_has_a_destination_and_a_voice_script() -> None:
     assert any("destination" in line for _, line in profile.voice_script)
     assert profile.potholes_m
     assert profile.speed_zones
+
+
+def test_sprint_profile_is_a_short_talk_on_the_same_road() -> None:
+    """The highlight reel has to finish before a room's attention moves on."""
+    full = RidePath(load_gpx(GPX_PATH))
+    profile = nagpur_sprint_profile()
+    path = RidePath(profile.waypoints)
+    assert 1_000 < path.length_m < 1_400
+    assert path.length_m == pytest.approx(SPRINT_LENGTH_M, abs=8.0)
+    assert path.waypoints[0] == full.waypoints[0]
+    assert profile.destination_name == "Ambazari approach"
+    assert any("pothole" in line for _, line in profile.voice_script)
+    assert profile.potholes_m[0] < path.length_m
+
+    clipped = clip_waypoints(full.waypoints, 500.0)
+    assert RidePath(clipped).length_m == pytest.approx(500.0, abs=5.0)
+
+    sim = RideSimulator(profile)
+    t = 0.0
+    while t < 130.0 and sim.state_at(t).distance_m < path.length_m - 20.0:
+        t += 0.5
+    assert t < 110.0, f"sprint still {path.length_m - sim.distance_m:.0f} m short at t={t:.0f}s"
+
+
+def test_demo_sprint_flag_selects_the_highlight_reel(config: AppConfig) -> None:
+    from app.main import build_node
+
+    node = build_node(config, quiet=True, demo_sprint=True)
+    assert node.coordinator.simulator is not None
+    assert node.coordinator.simulator.profile.destination_name == "Ambazari approach"
 
 
 def test_path_corners_do_not_unwind_lean() -> None:

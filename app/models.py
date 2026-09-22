@@ -168,6 +168,8 @@ class RideSample:
             "satellites": self.satellites,
             "latitude": self.state.latitude,
             "longitude": self.state.longitude,
+            "east_m": self.state.x_m,
+            "north_m": self.state.y_m,
             "altitude_m": self.state.altitude_m,
             "speed_kmh": self.metrics.speed_kmh,
             "speed_mps": self.state.speed_mps,

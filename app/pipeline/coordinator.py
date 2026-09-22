@@ -21,7 +21,7 @@ from app.pipeline.acquisition import Acquisition, SensorStats
 from app.pipeline.buffer import TelemetryBuffer
 from app.pipeline.processor import Processor
 from app.processing.synchronization import FrameSynchronizer
-from app.sensors import RideSimulator, SensorSet, build_sensors
+from app.sensors import Recording, RideSimulator, SensorSet, build_sensors
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,7 @@ class Coordinator:
         *,
         ride_id: str | None = None,
         simulator: RideSimulator | None = None,
+        recording: Recording | None = None,
         include_mic: bool | None = None,
     ) -> None:
         self.config = config
@@ -59,12 +60,14 @@ class Coordinator:
         self.synchronizer = FrameSynchronizer(config.fusion.reorder_window_s)
 
         self.sensor_set: SensorSet = build_sensors(
-            config, simulator=simulator, include_mic=include_mic
+            config, simulator=simulator, recording=recording, include_mic=include_mic
         )
-        sim = self.sensor_set.simulator
-        if sim is not None and sim.destination is not None:
-            self.processor.destination = sim.destination
-            self.processor.route_length_m = sim.route_length_m
+        # A simulator and a recording both know where the ride is going, and the
+        # processor only needs the answer, not which of them supplied it.
+        route = self.sensor_set.route
+        if route is not None and route.destination is not None:
+            self.processor.destination = route.destination
+            self.processor.route_length_m = route.route_length_m
         self.queue: asyncio.Queue[SensorReading] = asyncio.Queue(
             maxsize=max(64, config.pipeline.queue_size)
         )
@@ -100,6 +103,10 @@ class Coordinator:
     @property
     def simulator(self) -> RideSimulator | None:
         return self.sensor_set.simulator
+
+    @property
+    def recording(self) -> Recording | None:
+        return self.sensor_set.recording
 
     def stats(self) -> dict[str, Any]:
         """Health snapshot, surfaced by the dashboard and the CLI summary."""
