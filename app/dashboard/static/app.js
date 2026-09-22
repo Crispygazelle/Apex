@@ -554,6 +554,9 @@ function render(s) {
 
   pushSpark(s.speed_kmh, s.g_force);
   pushTrackSample(s);
+  noteSample(s);
+  updateDynReadouts(s);
+  requestCharts();
   maybeRecap(s);
 
   ui.diag.textContent =
@@ -720,6 +723,7 @@ async function loadHistory() {
     data.samples.forEach((s) => {
       if (s.gps_valid) pushTrackSample(s);
       pushSpark(s.speed_kmh, s.g_force);
+      noteSample(s);
     });
     if (data.samples.length) {
       rideOrigin = data.samples[0].timestamp;
@@ -841,6 +845,7 @@ window.addEventListener('resize', () => {
     drawSpark(ui.speedSpark, speedHist, SPEED_MAX_KMH, TRAIL.normal);
     drawSpark(ui.gSpark, gHist, G_MAX, TRAIL.fast);
   }
+  if (dynamicsPage) drawDynamics();
 });
 
 document.addEventListener('keydown', (event) => {
@@ -857,6 +862,12 @@ document.addEventListener('keydown', (event) => {
     nextBeat();
   }
   if (event.key === 'Escape' && !ui.recap.hidden) hideRecap();
+  if (event.key === '1') showPage('ride');
+  if (event.key === '2') showPage('dynamics');
+});
+
+document.querySelectorAll('.nav-btn[data-page]').forEach((button) => {
+  button.addEventListener('click', () => showPage(button.dataset.page));
 });
 
 ui.alertCancel.addEventListener('click', cancelSos);
@@ -864,6 +875,426 @@ ui.recapDismiss.addEventListener('click', hideRecap);
 ui.directorToggle.addEventListener('click', () => {
   ui.director.hidden = !ui.director.hidden;
 });
+
+/* ---------- dynamics page ---------- */
+
+const GRAVITY = 9.80665;
+const SERIES_DT = 0.25;
+const SERIES_CAP = 20000;
+const series = [];
+let dynamicsPage = false;
+let chartDirty = false;
+
+function showPage(page) {
+  dynamicsPage = page === 'dynamics';
+  document.body.dataset.page = page;
+  const ride = document.getElementById('page-ride');
+  const dynamics = document.getElementById('page-dynamics');
+  if (ride) ride.hidden = dynamicsPage;
+  if (dynamics) dynamics.hidden = !dynamicsPage;
+  document.querySelectorAll('.nav-btn[data-page]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.page === page);
+  });
+  if (!dynamicsPage && leafletMap) {
+    requestAnimationFrame(() => leafletMap.invalidateSize());
+  }
+  if (dynamicsPage) requestAnimationFrame(drawDynamics);
+}
+
+function noteSample(s) {
+  if (!Number.isFinite(s.timestamp)) return;
+  const last = series[series.length - 1];
+  if (last && s.timestamp <= last.t) return;
+  if (last && s.timestamp - last.t < SERIES_DT) return;
+  const east = Number.isFinite(s.east_m) ? s.east_m : 0;
+  const north = Number.isFinite(s.north_m) ? s.north_m : 0;
+  series.push({
+    t: s.timestamp,
+    kmh: s.speed_kmh,
+    v: s.speed_mps,
+    ax: s.longitudinal_accel_mps2,
+    ay: s.lateral_accel_mps2,
+    lean: s.lean_angle_deg,
+    east,
+    north,
+  });
+  if (series.length > SERIES_CAP) series.shift();
+}
+
+function updateDynReadouts(s) {
+  const speed = document.getElementById('dynSpeed');
+  if (!speed) return;
+  const ax = s.longitudinal_accel_mps2;
+  const predicted = GRAVITY * Math.tan(s.lean_angle_deg * Math.PI / 180);
+  speed.textContent = s.speed_kmh.toFixed(0);
+  document.getElementById('dynAx').textContent = ax.toFixed(2);
+  document.getElementById('dynEast').textContent = (s.east_m || 0).toFixed(0);
+  document.getElementById('dynNorth').textContent = (s.north_m || 0).toFixed(0);
+  document.getElementById('dynResidual').textContent = (s.lateral_accel_mps2 - predicted).toFixed(2);
+  document.getElementById('dynPower').textContent = (ax * s.speed_mps).toFixed(1);
+  const meta = document.getElementById('dynMeta');
+  if (meta && series.length) {
+    const span = series[series.length - 1].t - series[0].t;
+    meta.textContent = `${series.length} samples · ${span.toFixed(0)} s`;
+  }
+}
+
+function requestCharts() {
+  if (!dynamicsPage || chartDirty) return;
+  chartDirty = true;
+  requestAnimationFrame(() => {
+    chartDirty = false;
+    if (dynamicsPage) drawDynamics();
+  });
+}
+
+function drawDynamics() {
+  drawLongitudinal(document.getElementById('chartSpeed'));
+  drawLocalTrack(document.getElementById('chartTrack'));
+  drawCoordinatedTurn(document.getElementById('chartTurn'));
+  drawSpecificPower(document.getElementById('chartPower'));
+}
+
+function chartFrame(canvas) {
+  if (!canvas) return null;
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  if (w < 8 || h < 8) return null;
+  canvas.width = Math.floor(w * dpr);
+  canvas.height = Math.floor(h * dpr);
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  ctx.font = '11px "IBM Plex Sans", system-ui, sans-serif';
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  return { ctx, w, h };
+}
+
+function drawEmpty(ctx, w, h, text) {
+  ctx.fillStyle = '#8b95a2';
+  ctx.textAlign = 'center';
+  ctx.fillText(text, w / 2, h / 2);
+}
+
+function niceStep(span, ticks) {
+  const raw = Math.abs(span) / Math.max(ticks, 1);
+  if (!Number.isFinite(raw) || raw <= 0) return 1;
+  const pow = 10 ** Math.floor(Math.log10(raw));
+  const err = raw / pow;
+  const nice = err >= 7.5 ? 10 : err >= 3.5 ? 5 : err >= 1.5 ? 2 : 1;
+  return nice * pow;
+}
+
+function ticksBetween(min, max, count) {
+  const step = niceStep(max - min, count);
+  const start = Math.ceil(min / step) * step;
+  const out = [];
+  for (let value = start; value <= max + step * 0.01; value += step) out.push(value);
+  return out;
+}
+
+function formatTick(value) {
+  const abs = Math.abs(value);
+  if (abs >= 100) return value.toFixed(0);
+  if (abs >= 10) return value.toFixed(abs >= 20 ? 0 : 1);
+  return value.toFixed(1);
+}
+
+function clockLabel(seconds) {
+  const whole = Math.max(0, Math.round(seconds));
+  const m = Math.floor(whole / 60);
+  const s = whole % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function drawLongitudinal(canvas) {
+  const frame = chartFrame(canvas);
+  if (!frame) return;
+  const { ctx, w, h } = frame;
+  const pad = { l: 46, r: 46, t: 14, b: 26 };
+  const iw = w - pad.l - pad.r;
+  const ih = h - pad.t - pad.b;
+  if (series.length < 2) {
+    drawEmpty(ctx, w, h, 'Waiting for motion');
+    return;
+  }
+  const t0 = series[0].t;
+  const span = Math.max(series[series.length - 1].t - t0, 1);
+  let vMax = 40;
+  let aMin = -8;
+  let aMax = 4;
+  series.forEach((point) => {
+    vMax = Math.max(vMax, point.kmh);
+    aMin = Math.min(aMin, point.ax);
+    aMax = Math.max(aMax, point.ax);
+  });
+  vMax *= 1.08;
+  const xOf = (t) => pad.l + ((t - t0) / span) * iw;
+  const ySpeed = (kmh) => pad.t + ih - (kmh / vMax) * ih;
+  const yAccel = (a) => pad.t + ih - ((a - aMin) / (aMax - aMin)) * ih;
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.fillStyle = '#8b95a2';
+  ctx.textAlign = 'right';
+  ctx.lineWidth = 1;
+  ticksBetween(0, vMax, 4).forEach((tick) => {
+    const y = ySpeed(tick);
+    ctx.beginPath();
+    ctx.moveTo(pad.l, y);
+    ctx.lineTo(w - pad.r, y);
+    ctx.stroke();
+    ctx.fillText(formatTick(tick), pad.l - 6, y + 3);
+  });
+  ctx.textAlign = 'left';
+  ticksBetween(aMin, aMax, 4).forEach((tick) => {
+    ctx.fillText(formatTick(tick), w - pad.r + 6, yAccel(tick) + 3);
+  });
+
+  ctx.beginPath();
+  series.forEach((point, i) => {
+    const x = xOf(point.t);
+    const y = ySpeed(point.kmh);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.lineTo(xOf(series[series.length - 1].t), pad.t + ih);
+  ctx.lineTo(xOf(series[0].t), pad.t + ih);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(62, 207, 142, 0.16)';
+  ctx.fill();
+  ctx.beginPath();
+  series.forEach((point, i) => {
+    const x = xOf(point.t);
+    const y = ySpeed(point.kmh);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.strokeStyle = '#3ecf8e';
+  ctx.lineWidth = 1.6;
+  ctx.stroke();
+
+  ctx.beginPath();
+  series.forEach((point, i) => {
+    const x = xOf(point.t);
+    const y = yAccel(point.ax);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.strokeStyle = '#f0883e';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  const brakeY = yAccel(BRAKE_MPS2);
+  ctx.setLineDash([4, 4]);
+  ctx.strokeStyle = 'rgba(229, 72, 77, 0.85)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(pad.l, brakeY);
+  ctx.lineTo(w - pad.r, brakeY);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#e5484d';
+  ctx.textAlign = 'left';
+  ctx.fillText('brake', pad.l + 6, brakeY - 4);
+
+  ctx.fillStyle = '#8b95a2';
+  ctx.textAlign = 'center';
+  ticksBetween(0, span, 4).forEach((tick) => {
+    ctx.fillText(clockLabel(tick), xOf(t0 + tick), h - 8);
+  });
+}
+
+function drawLocalTrack(canvas) {
+  const frame = chartFrame(canvas);
+  if (!frame) return;
+  const { ctx, w, h } = frame;
+  const pad = 36;
+  if (series.length < 2) {
+    drawEmpty(ctx, w, h, 'Waiting for a fix');
+    return;
+  }
+  let minE = Infinity;
+  let maxE = -Infinity;
+  let minN = Infinity;
+  let maxN = -Infinity;
+  series.forEach((point) => {
+    minE = Math.min(minE, point.east);
+    maxE = Math.max(maxE, point.east);
+    minN = Math.min(minN, point.north);
+    maxN = Math.max(maxN, point.north);
+  });
+  const span = Math.max(maxE - minE, maxN - minN, 20);
+  const midE = (minE + maxE) / 2;
+  const midN = (minN + maxN) / 2;
+  const scale = Math.min(w - pad * 2, h - pad * 2) / span;
+  const project = (point) => [
+    w / 2 + (point.east - midE) * scale,
+    h / 2 - (point.north - midN) * scale,
+  ];
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.beginPath();
+  ctx.moveTo(w / 2, pad / 2);
+  ctx.lineTo(w / 2, h - pad / 2);
+  ctx.moveTo(pad / 2, h / 2);
+  ctx.lineTo(w - pad / 2, h / 2);
+  ctx.stroke();
+  ctx.fillStyle = '#8b95a2';
+  ctx.textAlign = 'left';
+  ctx.fillText(`${Math.round(span)} m`, 10, 16);
+
+  ctx.lineWidth = 2.4;
+  for (let i = 1; i < series.length; i += 1) {
+    const kind = series[i].ax <= BRAKE_MPS2 && series[i].kmh > 8
+      ? 'brake'
+      : series[i].kmh >= FAST_KMH ? 'fast' : 'normal';
+    ctx.strokeStyle = TRAIL[kind];
+    const [x0, y0] = project(series[i - 1]);
+    const [x1, y1] = project(series[i]);
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    ctx.stroke();
+  }
+  const [hx, hy] = project(series[series.length - 1]);
+  ctx.fillStyle = '#f0883e';
+  ctx.beginPath();
+  ctx.arc(hx, hy, 4.5, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawCoordinatedTurn(canvas) {
+  const frame = chartFrame(canvas);
+  if (!frame) return;
+  const { ctx, w, h } = frame;
+  const pad = { l: 46, r: 16, t: 14, b: 28 };
+  const moving = series.filter((point) => point.v > 2 && Math.abs(point.lean) < 55);
+  if (moving.length < 4) {
+    drawEmpty(ctx, w, h, 'Waiting for a turn');
+    return;
+  }
+  const points = moving.map((point) => ({
+    pred: GRAVITY * Math.tan(point.lean * Math.PI / 180),
+    meas: point.ay,
+  }));
+  let limit = 2;
+  points.forEach((point) => {
+    limit = Math.max(limit, Math.abs(point.pred), Math.abs(point.meas));
+  });
+  limit *= 1.15;
+  const xOf = (value) => pad.l + ((value + limit) / (2 * limit)) * (w - pad.l - pad.r);
+  const yOf = (value) => pad.t + (1 - (value + limit) / (2 * limit)) * (h - pad.t - pad.b);
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.fillStyle = '#8b95a2';
+  ctx.lineWidth = 1;
+  ticksBetween(-limit, limit, 4).forEach((tick) => {
+    ctx.beginPath();
+    ctx.moveTo(xOf(tick), pad.t);
+    ctx.lineTo(xOf(tick), h - pad.b);
+    ctx.moveTo(pad.l, yOf(tick));
+    ctx.lineTo(w - pad.r, yOf(tick));
+    ctx.stroke();
+    ctx.textAlign = 'center';
+    ctx.fillText(formatTick(tick), xOf(tick), h - 8);
+    ctx.textAlign = 'right';
+    ctx.fillText(formatTick(tick), pad.l - 6, yOf(tick) + 3);
+  });
+
+  ctx.setLineDash([4, 4]);
+  ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+  ctx.beginPath();
+  ctx.moveTo(xOf(-limit), yOf(-limit));
+  ctx.lineTo(xOf(limit), yOf(limit));
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  points.forEach((point, index) => {
+    const age = index / points.length;
+    ctx.fillStyle = `rgba(126, 182, 255, ${0.25 + age * 0.75})`;
+    ctx.beginPath();
+    ctx.arc(xOf(point.pred), yOf(point.meas), 2.4, 0, Math.PI * 2);
+    ctx.fill();
+  });
+}
+
+function drawSpecificPower(canvas) {
+  const frame = chartFrame(canvas);
+  if (!frame) return;
+  const { ctx, w, h } = frame;
+  const pad = { l: 48, r: 16, t: 14, b: 26 };
+  const iw = w - pad.l - pad.r;
+  const ih = h - pad.t - pad.b;
+  if (series.length < 2) {
+    drawEmpty(ctx, w, h, 'Waiting for motion');
+    return;
+  }
+  const powers = series.map((point) => point.ax * point.v);
+  const t0 = series[0].t;
+  const span = Math.max(series[series.length - 1].t - t0, 1);
+  let peak = 8;
+  powers.forEach((value) => { peak = Math.max(peak, Math.abs(value)); });
+  peak *= 1.1;
+  const xOf = (t) => pad.l + ((t - t0) / span) * iw;
+  const yOf = (value) => pad.t + ih / 2 - (value / peak) * (ih / 2);
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.fillStyle = '#8b95a2';
+  ctx.lineWidth = 1;
+  ctx.textAlign = 'right';
+  ticksBetween(-peak, peak, 4).forEach((tick) => {
+    const y = yOf(tick);
+    ctx.beginPath();
+    ctx.moveTo(pad.l, y);
+    ctx.lineTo(w - pad.r, y);
+    ctx.stroke();
+    ctx.fillText(formatTick(tick), pad.l - 6, y + 3);
+  });
+
+  const zero = yOf(0);
+  ctx.beginPath();
+  powers.forEach((value, i) => {
+    const x = xOf(series[i].t);
+    const y = yOf(Math.max(0, value));
+    if (i === 0) ctx.moveTo(x, zero);
+    ctx.lineTo(x, y);
+  });
+  ctx.lineTo(xOf(series[series.length - 1].t), zero);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(62, 207, 142, 0.28)';
+  ctx.fill();
+
+  ctx.beginPath();
+  powers.forEach((value, i) => {
+    const x = xOf(series[i].t);
+    const y = yOf(Math.min(0, value));
+    if (i === 0) ctx.moveTo(x, zero);
+    ctx.lineTo(x, y);
+  });
+  ctx.lineTo(xOf(series[series.length - 1].t), zero);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(229, 72, 77, 0.28)';
+  ctx.fill();
+
+  ctx.beginPath();
+  powers.forEach((value, i) => {
+    const x = xOf(series[i].t);
+    const y = yOf(value);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.strokeStyle = '#e6edf3';
+  ctx.lineWidth = 1.4;
+  ctx.stroke();
+
+  ctx.fillStyle = '#8b95a2';
+  ctx.textAlign = 'center';
+  ticksBetween(0, span, 4).forEach((tick) => {
+    ctx.fillText(clockLabel(tick), xOf(t0 + tick), h - 8);
+  });
+}
 
 // Tile source has to be known before the map is built, so this one is awaited.
 loadMapConfig().then(() => {
