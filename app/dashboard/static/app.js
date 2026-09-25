@@ -846,6 +846,7 @@ window.addEventListener('resize', () => {
     drawSpark(ui.gSpark, gHist, G_MAX, TRAIL.fast);
   }
   if (dynamicsPage) drawDynamics();
+  if (document.body.dataset.page === 'rides') requestAnimationFrame(drawSavedCharts);
 });
 
 document.addEventListener('keydown', (event) => {
@@ -864,6 +865,7 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !ui.recap.hidden) hideRecap();
   if (event.key === '1') showPage('ride');
   if (event.key === '2') showPage('dynamics');
+  if (event.key === '3') showPage('rides');
 });
 
 document.querySelectorAll('.nav-btn[data-page]').forEach((button) => {
@@ -888,17 +890,18 @@ let chartDirty = false;
 function showPage(page) {
   dynamicsPage = page === 'dynamics';
   document.body.dataset.page = page;
-  const ride = document.getElementById('page-ride');
-  const dynamics = document.getElementById('page-dynamics');
-  if (ride) ride.hidden = dynamicsPage;
-  if (dynamics) dynamics.hidden = !dynamicsPage;
+  for (const name of ['ride', 'dynamics', 'rides']) {
+    const node = document.getElementById(`page-${name}`);
+    if (node) node.hidden = page !== name;
+  }
   document.querySelectorAll('.nav-btn[data-page]').forEach((button) => {
     button.classList.toggle('active', button.dataset.page === page);
   });
-  if (!dynamicsPage && leafletMap) {
+  if (page === 'ride' && leafletMap) {
     requestAnimationFrame(() => leafletMap.invalidateSize());
   }
-  if (dynamicsPage) requestAnimationFrame(drawDynamics);
+  if (page === 'dynamics') requestAnimationFrame(drawDynamics);
+  if (page === 'rides') loadRideList();
 }
 
 function noteSample(s) {
@@ -1009,6 +1012,11 @@ function clockLabel(seconds) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+let reviewRows = null;
+function chartRows() {
+  return reviewRows || series;
+}
+
 function drawLongitudinal(canvas) {
   const frame = chartFrame(canvas);
   if (!frame) return;
@@ -1016,16 +1024,16 @@ function drawLongitudinal(canvas) {
   const pad = { l: 46, r: 46, t: 14, b: 26 };
   const iw = w - pad.l - pad.r;
   const ih = h - pad.t - pad.b;
-  if (series.length < 2) {
+  if (chartRows().length < 2) {
     drawEmpty(ctx, w, h, 'Waiting for motion');
     return;
   }
-  const t0 = series[0].t;
-  const span = Math.max(series[series.length - 1].t - t0, 1);
+  const t0 = chartRows()[0].t;
+  const span = Math.max(chartRows()[chartRows().length - 1].t - t0, 1);
   let vMax = 40;
   let aMin = -8;
   let aMax = 4;
-  series.forEach((point) => {
+  chartRows().forEach((point) => {
     vMax = Math.max(vMax, point.kmh);
     aMin = Math.min(aMin, point.ax);
     aMax = Math.max(aMax, point.ax);
@@ -1053,19 +1061,19 @@ function drawLongitudinal(canvas) {
   });
 
   ctx.beginPath();
-  series.forEach((point, i) => {
+  chartRows().forEach((point, i) => {
     const x = xOf(point.t);
     const y = ySpeed(point.kmh);
     if (i === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
   });
-  ctx.lineTo(xOf(series[series.length - 1].t), pad.t + ih);
-  ctx.lineTo(xOf(series[0].t), pad.t + ih);
+  ctx.lineTo(xOf(chartRows()[chartRows().length - 1].t), pad.t + ih);
+  ctx.lineTo(xOf(chartRows()[0].t), pad.t + ih);
   ctx.closePath();
   ctx.fillStyle = 'rgba(62, 207, 142, 0.16)';
   ctx.fill();
   ctx.beginPath();
-  series.forEach((point, i) => {
+  chartRows().forEach((point, i) => {
     const x = xOf(point.t);
     const y = ySpeed(point.kmh);
     if (i === 0) ctx.moveTo(x, y);
@@ -1076,7 +1084,7 @@ function drawLongitudinal(canvas) {
   ctx.stroke();
 
   ctx.beginPath();
-  series.forEach((point, i) => {
+  chartRows().forEach((point, i) => {
     const x = xOf(point.t);
     const y = yAccel(point.ax);
     if (i === 0) ctx.moveTo(x, y);
@@ -1111,7 +1119,7 @@ function drawLocalTrack(canvas) {
   if (!frame) return;
   const { ctx, w, h } = frame;
   const pad = 36;
-  if (series.length < 2) {
+  if (chartRows().length < 2) {
     drawEmpty(ctx, w, h, 'Waiting for a fix');
     return;
   }
@@ -1119,7 +1127,7 @@ function drawLocalTrack(canvas) {
   let maxE = -Infinity;
   let minN = Infinity;
   let maxN = -Infinity;
-  series.forEach((point) => {
+  chartRows().forEach((point) => {
     minE = Math.min(minE, point.east);
     maxE = Math.max(maxE, point.east);
     minN = Math.min(minN, point.north);
@@ -1146,19 +1154,19 @@ function drawLocalTrack(canvas) {
   ctx.fillText(`${Math.round(span)} m`, 10, 16);
 
   ctx.lineWidth = 2.4;
-  for (let i = 1; i < series.length; i += 1) {
-    const kind = series[i].ax <= BRAKE_MPS2 && series[i].kmh > 8
+  for (let i = 1; i < chartRows().length; i += 1) {
+    const kind = chartRows()[i].ax <= BRAKE_MPS2 && chartRows()[i].kmh > 8
       ? 'brake'
-      : series[i].kmh >= FAST_KMH ? 'fast' : 'normal';
+      : chartRows()[i].kmh >= FAST_KMH ? 'fast' : 'normal';
     ctx.strokeStyle = TRAIL[kind];
-    const [x0, y0] = project(series[i - 1]);
-    const [x1, y1] = project(series[i]);
+    const [x0, y0] = project(chartRows()[i - 1]);
+    const [x1, y1] = project(chartRows()[i]);
     ctx.beginPath();
     ctx.moveTo(x0, y0);
     ctx.lineTo(x1, y1);
     ctx.stroke();
   }
-  const [hx, hy] = project(series[series.length - 1]);
+  const [hx, hy] = project(chartRows()[chartRows().length - 1]);
   ctx.fillStyle = '#f0883e';
   ctx.beginPath();
   ctx.arc(hx, hy, 4.5, 0, Math.PI * 2);
@@ -1170,7 +1178,7 @@ function drawCoordinatedTurn(canvas) {
   if (!frame) return;
   const { ctx, w, h } = frame;
   const pad = { l: 46, r: 16, t: 14, b: 28 };
-  const moving = series.filter((point) => point.v > 2 && Math.abs(point.lean) < 55);
+  const moving = chartRows().filter((point) => point.v > 2 && Math.abs(point.lean) < 55);
   if (moving.length < 4) {
     drawEmpty(ctx, w, h, 'Waiting for a turn');
     return;
@@ -1227,13 +1235,13 @@ function drawSpecificPower(canvas) {
   const pad = { l: 48, r: 16, t: 14, b: 26 };
   const iw = w - pad.l - pad.r;
   const ih = h - pad.t - pad.b;
-  if (series.length < 2) {
+  if (chartRows().length < 2) {
     drawEmpty(ctx, w, h, 'Waiting for motion');
     return;
   }
-  const powers = series.map((point) => point.ax * point.v);
-  const t0 = series[0].t;
-  const span = Math.max(series[series.length - 1].t - t0, 1);
+  const powers = chartRows().map((point) => point.ax * point.v);
+  const t0 = chartRows()[0].t;
+  const span = Math.max(chartRows()[chartRows().length - 1].t - t0, 1);
   let peak = 8;
   powers.forEach((value) => { peak = Math.max(peak, Math.abs(value)); });
   peak *= 1.1;
@@ -1256,31 +1264,31 @@ function drawSpecificPower(canvas) {
   const zero = yOf(0);
   ctx.beginPath();
   powers.forEach((value, i) => {
-    const x = xOf(series[i].t);
+    const x = xOf(chartRows()[i].t);
     const y = yOf(Math.max(0, value));
     if (i === 0) ctx.moveTo(x, zero);
     ctx.lineTo(x, y);
   });
-  ctx.lineTo(xOf(series[series.length - 1].t), zero);
+  ctx.lineTo(xOf(chartRows()[chartRows().length - 1].t), zero);
   ctx.closePath();
   ctx.fillStyle = 'rgba(62, 207, 142, 0.28)';
   ctx.fill();
 
   ctx.beginPath();
   powers.forEach((value, i) => {
-    const x = xOf(series[i].t);
+    const x = xOf(chartRows()[i].t);
     const y = yOf(Math.min(0, value));
     if (i === 0) ctx.moveTo(x, zero);
     ctx.lineTo(x, y);
   });
-  ctx.lineTo(xOf(series[series.length - 1].t), zero);
+  ctx.lineTo(xOf(chartRows()[chartRows().length - 1].t), zero);
   ctx.closePath();
   ctx.fillStyle = 'rgba(229, 72, 77, 0.28)';
   ctx.fill();
 
   ctx.beginPath();
   powers.forEach((value, i) => {
-    const x = xOf(series[i].t);
+    const x = xOf(chartRows()[i].t);
     const y = yOf(value);
     if (i === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
@@ -1294,6 +1302,76 @@ function drawSpecificPower(canvas) {
   ticksBetween(0, span, 4).forEach((tick) => {
     ctx.fillText(clockLabel(tick), xOf(t0 + tick), h - 8);
   });
+}
+
+function sampleToRow(s) {
+  return {
+    t: s.timestamp,
+    kmh: s.speed_kmh,
+    v: s.speed_mps,
+    ax: s.longitudinal_accel_mps2,
+    ay: s.lateral_accel_mps2,
+    lean: s.lean_angle_deg,
+    east: s.east_m || 0,
+    north: s.north_m || 0,
+  };
+}
+
+function drawSavedCharts() {
+  drawLongitudinal(document.getElementById('savedSpeed'));
+  drawLocalTrack(document.getElementById('savedTrack'));
+  drawCoordinatedTurn(document.getElementById('savedTurn'));
+  drawSpecificPower(document.getElementById('savedPower'));
+}
+
+async function loadRideList() {
+  const list = document.getElementById('rideList');
+  if (!list) return;
+  let rides = [];
+  try {
+    const response = await fetch('/api/rides');
+    if (response.ok) rides = (await response.json()).rides || [];
+  } catch { /* the list stays empty */ }
+  if (!rides.length) {
+    list.innerHTML = '<p class="muted small">No saved rides yet. Finish a ride, then come back.</p>';
+    return;
+  }
+  list.innerHTML = '';
+  rides.forEach((ride) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'ride-item';
+    const when = new Date((ride.ended_at || 0) * 1000).toLocaleString();
+    const km = ((ride.distance_m || 0) / 1000).toFixed(2);
+    button.innerHTML =
+      `<strong>${escapeHtml(ride.route || ride.ride_id)}</strong>`
+      + `<small>${escapeHtml(when)} · ${km} km · ${Number(ride.max_speed_kmh || 0).toFixed(0)} km/h</small>`;
+    button.addEventListener('click', () => openSavedRide(ride.ride_id, button));
+    list.appendChild(button);
+  });
+}
+
+async function openSavedRide(rideId, button) {
+  document.querySelectorAll('.ride-item').forEach((item) => item.classList.remove('active'));
+  if (button) button.classList.add('active');
+  const response = await fetch(`/api/rides/${encodeURIComponent(rideId)}`);
+  if (!response.ok) return;
+  const payload = await response.json();
+  const ride = payload.ride || {};
+  document.getElementById('rideDetailTitle').textContent =
+    `${ride.route || ride.ride_id} · saved ride`;
+  const stats = [
+    ['Distance', `${((ride.distance_m || 0) / 1000).toFixed(2)} km`],
+    ['Duration', clockLabel(ride.duration_s || 0)],
+    ['Max speed', `${Number(ride.max_speed_kmh || 0).toFixed(0)} km/h`],
+    ['Peak g', `${Number(ride.max_g_force || 0).toFixed(2)} g`],
+    ['Samples', String(ride.samples || 0)],
+  ];
+  document.getElementById('rideDetailStats').innerHTML = stats
+    .map(([label, value]) => `<div><dt>${label}</dt><dd>${value}</dd></div>`)
+    .join('');
+  reviewRows = (payload.samples || []).map(sampleToRow);
+  requestAnimationFrame(drawSavedCharts);
 }
 
 // Tile source has to be known before the map is built, so this one is awaited.

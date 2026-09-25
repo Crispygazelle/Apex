@@ -21,6 +21,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.storage.influxdb import InfluxUnavailableError
+from app.storage.ride_archive import RideArchive
 
 if TYPE_CHECKING:
     from app.pipeline.coordinator import Coordinator
@@ -44,6 +45,7 @@ def create_app(
     safety: SafetyMonitor | None = None,
     voice: VoiceAssistant | None = None,
     event_log: EventLog | None = None,
+    ride_archive: RideArchive | None = None,
 ) -> FastAPI:
     """Build the dashboard around an already-running coordinator."""
     app = FastAPI(
@@ -320,6 +322,28 @@ def create_app(
                 "hey apex status report",
             ],
         }
+
+    archive_dir = ride_archive.directory if ride_archive is not None else None
+
+    @app.get("/api/rides")
+    async def list_rides() -> dict[str, Any]:
+        """Saved rides on this computer, newest first."""
+        if archive_dir is None:
+            return {"rides": []}
+        return {"rides": RideArchive.list_rides(archive_dir)}
+
+    @app.get("/api/rides/{ride_id}")
+    async def get_saved_ride(ride_id: str) -> dict[str, Any]:
+        """One saved ride: its summary and the thinned track."""
+        if archive_dir is None:
+            raise HTTPException(status_code=404, detail="no ride archive")
+        try:
+            payload = RideArchive.load_ride(archive_dir, ride_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail="ride not found") from exc
+        if payload is None:
+            raise HTTPException(status_code=404, detail="ride not found")
+        return payload
 
     @app.get("/api/health")
     async def health() -> dict[str, Any]:

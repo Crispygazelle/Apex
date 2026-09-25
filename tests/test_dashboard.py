@@ -120,6 +120,8 @@ def test_index_and_assets_are_served(client: TestClient) -> None:
     assert 'class="cockpit"' in html
     assert 'id="recap"' in html
     assert 'id="page-dynamics"' in html
+    assert 'id="page-rides"' in html
+    assert 'data-page="rides"' in html
     assert 'data-page="dynamics"' in html
     assert 'id="filmstrip"' in html
     assert client.get("/static/app.js").status_code == 200

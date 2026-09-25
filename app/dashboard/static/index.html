@@ -35,6 +35,13 @@
         <small>Vehicle physics</small>
       </span>
     </button>
+    <button type="button" class="nav-btn" data-page="rides">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h12v16H6z"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>
+      <span class="nav-copy">
+        <strong>Rides</strong>
+        <small>Saved on this computer</small>
+      </span>
+    </button>
   </nav>
 
   <section id="directorPanel" class="director-panel" hidden>
@@ -220,6 +227,42 @@
         </header>
         <canvas id="chartPower"></canvas>
       </article>
+    </div>
+  </div>
+
+  <div id="page-rides" class="page page-rides" hidden>
+    <div class="dyn-head">
+      <div>
+        <h1>Rides</h1>
+        <p id="ridesIntro">Saved on this computer. A saved ride is not the live bike.</p>
+      </div>
+    </div>
+    <div class="rides-layout">
+      <div id="rideList" class="ride-list">
+        <p class="muted small">No saved rides yet.</p>
+      </div>
+      <div class="ride-detail">
+        <p id="rideDetailTitle" class="ride-detail-title">Choose a ride</p>
+        <dl id="rideDetailStats" class="ride-detail-stats"></dl>
+        <div class="dyn-grid rides-charts">
+          <article class="chart-card">
+            <header><div><h2>Longitudinal</h2><p class="formula">v(t), a∥(t)</p></div></header>
+            <canvas id="savedSpeed"></canvas>
+          </article>
+          <article class="chart-card">
+            <header><div><h2>Local track</h2><p class="formula">east, north · metres</p></div></header>
+            <canvas id="savedTrack"></canvas>
+          </article>
+          <article class="chart-card">
+            <header><div><h2>Coordinated turn</h2><p class="formula">a⊥ versus g·tan θ</p></div></header>
+            <canvas id="savedTurn"></canvas>
+          </article>
+          <article class="chart-card">
+            <header><div><h2>Specific power</h2><p class="formula">p = a∥ · v</p></div></header>
+            <canvas id="savedPower"></canvas>
+          </article>
+        </div>
+      </div>
     </div>
   </div>
 </div>
