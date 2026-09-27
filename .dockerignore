@@ -1,0 +1,8 @@
+.git
+.venv
+venv
+data
+models
+.env
+dbtoken.txt
+**/__pycache__

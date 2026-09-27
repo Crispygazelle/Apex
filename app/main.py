@@ -20,6 +20,7 @@ import contextlib
 import logging
 import signal
 import sys
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -38,6 +39,7 @@ from app.sensors.recording import (
 from app.sensors.simulated import RideProfile, RideSimulator
 from app.storage.batch_writer import BatchWriter
 from app.storage.influxdb import InfluxWriter
+from app.storage.ride_archive import RideArchive
 from app.streaming.websocket import TelemetryHub
 from app.voice.assistant import VoiceAssistant
 
@@ -209,6 +211,7 @@ class ApexNode:
     event_log: EventLog | None = None
     director: RideDirector | None = None
     recorder: RideRecorder | None = None
+    ride_archive: RideArchive | None = None
     _server_task: asyncio.Task[None] | None = field(default=None, init=False)
     _server: Any = field(default=None, init=False)
 
@@ -241,6 +244,7 @@ class ApexNode:
             self.safety,
             self.voice,
             event_log=self.event_log,
+            ride_archive=self.ride_archive,
         )
         server_config = uvicorn.Config(
             app,
@@ -283,6 +287,9 @@ class ApexNode:
 
         if self.batch_writer is not None:
             await self.batch_writer.stop()
+
+        if self.ride_archive is not None:
+            self.ride_archive.close()
 
         # Last, so a reading that arrived during shutdown is still on disk.
         if self.recorder is not None:
@@ -395,6 +402,15 @@ def build_node(
         writer = InfluxWriter(config.storage, helmet_id=config.node.helmet_id)
         node.batch_writer = BatchWriter(config.storage, writer)
         coordinator.subscribe_sample(node.batch_writer.submit)
+
+    route = coordinator.sensor_set.route
+    node.ride_archive = RideArchive(
+        Path(config.node.data_dir) / "rides",
+        ride_id=coordinator.ride_id,
+        route_name=route.route_name if route is not None else "",
+        destination_name=route.destination_name if route is not None else "",
+    )
+    coordinator.subscribe_sample(node.ride_archive.submit)
 
     if config.safety.enabled:
         # Subscribes itself in start(), after storage and streaming exist, so a
