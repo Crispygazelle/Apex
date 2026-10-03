@@ -9,4 +9,6 @@
 
 Run `sudo ./deploy/pi-setup.sh` from a clone on the Pi, then reboot and check the sensors as the script prints. The unit starts `python -m app.main --backend hardware --quiet`.
 
+`config/apex.yaml` leaves `sensor_backend` at `sim` so a laptop stays simulated. This service is the switch to real sensors. A manual run on the Pi needs the same flag: `python -m app.main --backend hardware`.
+
 This script refuses to run on a machine that is not a Raspberry Pi.
