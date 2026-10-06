@@ -141,6 +141,8 @@ class RideMetrics:
     remaining_m: float = 0.0
     destination_latitude: float = 0.0
     destination_longitude: float = 0.0
+    # "route" follows a known road, "straight" is a dropped pin, "none" is an open ride.
+    destination_kind: str = "none"
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,6 +186,7 @@ class RideSample:
             "remaining_m": self.metrics.remaining_m,
             "destination_latitude": self.metrics.destination_latitude,
             "destination_longitude": self.metrics.destination_longitude,
+            "destination_kind": self.metrics.destination_kind,
             "max_speed_kmh": self.metrics.max_speed_kmh,
             "max_g_force": self.metrics.max_g_force,
             "fusion_mode": self.state.mode.value,

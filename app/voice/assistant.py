@@ -79,6 +79,7 @@ class VoiceAssistant:
         *,
         safety: SafetyMonitor | None = None,
         batch_writer: BatchWriter | None = None,
+        hazard_log: Any = None,
         transcriber: Transcriber | None = None,
         speaker: Speaker | None = None,
     ) -> None:
@@ -90,7 +91,7 @@ class VoiceAssistant:
         self.wake = WakeWordDetector(voice.wake_words)
         self.parser = IntentParser()
         self.commands = CommandHandler(
-            coordinator, safety=safety, batch_writer=batch_writer
+            coordinator, safety=safety, batch_writer=batch_writer, hazard_log=hazard_log
         )
         self.transcriber = transcriber or build_transcriber(
             voice.vosk_model_path, sample_rate=config.sensors.mic.sample_rate

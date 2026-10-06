@@ -7,7 +7,7 @@ command is one method and one intent name, not a change to fusion.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from app import clock
 from app.models import HazardReport, RideSample, SystemState
@@ -34,10 +34,12 @@ class CommandHandler:
         *,
         safety: SafetyMonitor | None = None,
         batch_writer: BatchWriter | None = None,
+        hazard_log: Any = None,
     ) -> None:
         self.coordinator = coordinator
         self.safety = safety
         self.batch_writer = batch_writer
+        self.hazard_log = hazard_log
         self.hazards: list[HazardReport] = []
 
     @property
@@ -147,6 +149,8 @@ class CommandHandler:
             longitude=sample.state.longitude,
         )
         self.hazards.append(report)
+        if self.hazard_log is not None:
+            self.hazard_log.add(report)
         if self.batch_writer is not None:
             try:
                 await self.batch_writer.record_hazard(report)

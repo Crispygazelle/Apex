@@ -119,7 +119,12 @@ class SafetyMonitor:
 
     def cancel_sos(self, reason: str = "rider cancelled") -> bool:
         """Called by the dashboard and, in Phase 4, by voice."""
-        return self.sos.cancel(reason)
+        cancelled = self.sos.cancel(reason)
+        if cancelled:
+            simulator = self.coordinator.simulator
+            if simulator is not None:
+                simulator.resume_after_rehearsal()
+        return cancelled
 
     # --- internals --------------------------------------------------------
 

@@ -20,6 +20,7 @@ from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocket
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.storage.hazard_log import HazardLog
 from app.storage.influxdb import InfluxUnavailableError
 from app.storage.ride_archive import RideArchive
 
@@ -46,6 +47,7 @@ def create_app(
     voice: VoiceAssistant | None = None,
     event_log: EventLog | None = None,
     ride_archive: RideArchive | None = None,
+    hazard_log: HazardLog | None = None,
 ) -> FastAPI:
     """Build the dashboard around an already-running coordinator."""
     app = FastAPI(
@@ -344,6 +346,34 @@ def create_app(
         if payload is None:
             raise HTTPException(status_code=404, detail="ride not found")
         return payload
+
+    @app.get("/api/hazards")
+    async def list_hazards(ride_id: str | None = None) -> dict[str, Any]:
+        """Logged hazards. Omit ride_id for every ride on this computer."""
+        if hazard_log is None:
+            return {"hazards": []}
+        return {"hazards": hazard_log.all(ride_id)}
+
+    @app.post("/api/destination")
+    async def set_destination(
+        latitude: float = Query(ge=-90, le=90),
+        longitude: float = Query(ge=-180, le=180),
+    ) -> dict[str, Any]:
+        """Drop a pin. Remaining becomes the straight-line distance to it."""
+        processor = coordinator.processor
+        processor.destination = (latitude, longitude)
+        processor.route_length_m = 0.0
+        processor.destination_kind = "straight"
+        return {"destination_kind": "straight", "latitude": latitude, "longitude": longitude}
+
+    @app.post("/api/destination/clear")
+    async def clear_destination() -> dict[str, Any]:
+        """Ride with no finish line. The remaining card goes blank."""
+        processor = coordinator.processor
+        processor.destination = None
+        processor.route_length_m = 0.0
+        processor.destination_kind = "none"
+        return {"destination_kind": "none"}
 
     @app.get("/api/health")
     async def health() -> dict[str, Any]:

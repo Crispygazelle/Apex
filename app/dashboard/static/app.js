@@ -47,7 +47,8 @@ const ui = {
   speedSpark: el('speedSpark'), gSpark: el('gSpark'),
   fusion: el('fusion'), lean: el('lean'), leanBike: el('leanBike'),
   gforce: el('gforce'), maxG: el('maxG'),
-  distance: el('distance'), remaining: el('remaining'), eta: el('eta'),
+  distance: el('distance'), remaining: el('remaining'), remainKind: el('remainKind'),
+  eta: el('eta'), setDest: el('setDest'), clearDest: el('clearDest'),
   gradient: el('gradient'), altitude: el('altitude'),
   heading: el('heading'), cardinal: el('cardinal'),
   longAccel: el('longAccel'), sats: el('sats'),
@@ -70,6 +71,9 @@ let leafletMap = null;
 let colorLines = [];
 let brakeDots = [];
 let hazardDots = [];
+const seenHazards = new Set();
+let routeDestinationName = '';
+let armDestination = false;
 let marker = null;
 let startMarker = null;
 let destMarker = null;
@@ -184,9 +188,17 @@ function initMap() {
 
   marker = L.circleMarker([0, 0], {
     radius: 7, color: '#fff', fillColor: '#f0883e', fillOpacity: 1, weight: 2,
-  }).addTo(leafletMap);
+  }).addTo(leafletMap).bindTooltip('Rider', { direction: 'top' });
 
   leafletMap.on('dragstart', () => { followRider = false; });
+  leafletMap.on('click', async (event) => {
+    if (!armDestination) return;
+    armDestination = false;
+    ui.setDest.classList.remove('armed');
+    ui.setDest.textContent = 'Set destination';
+    const { lat, lng } = event.latlng;
+    await fetch(`/api/destination?latitude=${lat}&longitude=${lng}`, { method: 'POST' });
+  });
   requestAnimationFrame(() => {
     if (leafletMap) leafletMap.invalidateSize();
   });
@@ -201,6 +213,7 @@ function useCanvasFallback(note, recoverable) {
   brakeDots = [];
   hazardDots = [];
   marker = startMarker = destMarker = null;
+  seenHazards.clear();
 
   ui.map.hidden = true;
   ui.canvas.hidden = false;
@@ -256,7 +269,8 @@ function rebuildTrail() {
       return;
     }
     const seed = i > 0 ? [[track[i - 1].lat, track[i - 1].lon], latlng] : [latlng];
-    segment = L.polyline(seed, trailStyle(point.kind)).addTo(leafletMap);
+    segment = L.polyline(seed, trailStyle(point.kind)).addTo(leafletMap)
+      .bindTooltip(trailTip(point.kind), { sticky: true, direction: 'top' });
     colorLines.push(segment);
     segmentKind = point.kind;
     if (point.kind === 'brake' && i > 0) addBrakeDot(point.lat, point.lon);
@@ -272,7 +286,8 @@ function rebuildTrail() {
     }).addTo(leafletMap).bindTooltip('Start', { direction: 'top' });
     leafletMap.setView([head.lat, head.lon], 15);
   }
-  if (lastSample) ensureDestMarker(lastSample);
+  if (lastSample) syncDestMarker(lastSample);
+  loadHazards();
 }
 
 function trailStyle(kind) {
@@ -343,15 +358,36 @@ function drawCanvasTrack() {
   ctx.fill();
 }
 
-function ensureDestMarker(s) {
-  if (!leafletMap || destMarker || !s.destination_latitude) return;
-  destMarker = L.circleMarker(
-    [s.destination_latitude, s.destination_longitude],
-    { radius: 8, color: '#fff', fillColor: '#58a6ff', fillOpacity: 0.95, weight: 2 },
-  ).addTo(leafletMap).bindTooltip('Destination', { direction: 'top' });
+function syncDestMarker(s) {
+  const kind = destinationKind(s);
+  const showPin = leafletMap && kind !== 'none' && s.destination_latitude;
+  if (!showPin) {
+    if (destMarker) {
+      destMarker.remove();
+      destMarker = null;
+    }
+    return;
+  }
+  const latlng = [s.destination_latitude, s.destination_longitude];
+  const tip = kind === 'straight' ? 'Straight-line pin' : 'Destination';
+  if (!destMarker) {
+    destMarker = L.circleMarker(latlng, {
+      radius: 8, color: '#fff', fillColor: '#58a6ff', fillOpacity: 0.95, weight: 2,
+    }).addTo(leafletMap);
+  } else {
+    destMarker.setLatLng(latlng);
+  }
+  destMarker.unbindTooltip();
+  destMarker.bindTooltip(tip, { direction: 'top' });
 }
 
-function addBrakeDot(lat, lon) {
+function trailTip(kind) {
+  if (kind === 'brake') return 'Braking';
+  if (kind === 'fast') return 'Fast';
+  return 'Cruise';
+}
+
+function addBrakeDot(lat, lon, label) {
   if (!leafletMap) return;
   const last = brakeDots[brakeDots.length - 1];
   if (last) {
@@ -362,14 +398,35 @@ function addBrakeDot(lat, lon) {
   }
   brakeDots.push(L.circleMarker([lat, lon], {
     radius: 5, color: '#ffb4b0', fillColor: TRAIL.brake, fillOpacity: 1, weight: 1.5,
-  }).addTo(leafletMap));
+  }).addTo(leafletMap).bindTooltip(label || 'Hard brake', { direction: 'top' }));
+}
+
+function hazardIcon(type) {
+  const key = String(type || '').toLowerCase();
+  const kind = key.includes('pothole') ? 'pothole'
+    : key.includes('construct') ? 'construction'
+    : key.includes('gravel') ? 'gravel'
+    : (key.includes('oil') || key.includes('spill')) ? 'oil'
+    : 'generic';
+  const glyphs = {
+    pothole: '<circle cx="12" cy="14" r="5" fill="#e5484d"/><path d="M8 14h8M12 10v8" stroke="#fff" stroke-width="1.4"/>',
+    construction: '<path d="M6 16h12l-2-8H8z" fill="#d29922"/><path d="M7 12h10" stroke="#1a1408" stroke-width="1.6"/>',
+    gravel: '<circle cx="8" cy="15" r="2" fill="#c4b8a5"/><circle cx="13" cy="13" r="2.2" fill="#a89880"/><circle cx="16" cy="16" r="1.6" fill="#d9cbb6"/>',
+    oil: '<ellipse cx="12" cy="15" rx="6" ry="3.5" fill="#3d4d66"/><ellipse cx="12" cy="14" rx="3" ry="1.6" fill="#7eb6ff" opacity="0.7"/>',
+    generic: '<path d="M12 5l5 12H7z" fill="#f0883e"/>',
+  };
+  const html = `<svg viewBox="0 0 24 24" width="26" height="26">${glyphs[kind]}</svg>`;
+  return L.divIcon({ className: 'hazard-pin', html, iconSize: [26, 26], iconAnchor: [13, 13] });
 }
 
 function addHazardDot(lat, lon, label) {
   if (!leafletMap || !lat) return;
-  hazardDots.push(L.circleMarker([lat, lon], {
-    radius: 6, color: '#fff', fillColor: '#d29922', fillOpacity: 1, weight: 2,
-  }).addTo(leafletMap).bindTooltip(label || 'hazard', { direction: 'top' }));
+  const key = `${lat.toFixed(5)}|${lon.toFixed(5)}|${label || ''}`;
+  if (seenHazards.has(key)) return;
+  seenHazards.add(key);
+  hazardDots.push(L.marker([lat, lon], { icon: hazardIcon(label) })
+    .addTo(leafletMap)
+    .bindTooltip(label || 'hazard', { direction: 'top' }));
 }
 
 function appendColourSegment(lat, lon, kind) {
@@ -380,7 +437,10 @@ function appendColourSegment(lat, lon, kind) {
     return;
   }
   const latlngs = lastPoint ? [[lastPoint.lat, lastPoint.lon], [lat, lon]] : [[lat, lon]];
-  colorLines.push(L.polyline(latlngs, trailStyle(kind)).addTo(leafletMap));
+  colorLines.push(
+    L.polyline(latlngs, trailStyle(kind)).addTo(leafletMap)
+      .bindTooltip(trailTip(kind), { sticky: true, direction: 'top' }),
+  );
 }
 
 function pushTrackSample(s) {
@@ -414,7 +474,7 @@ function pushTrackSample(s) {
   track.push({ lat: s.latitude, lon: s.longitude, kind });
   if (track.length > MAX_TRACK_POINTS) track.shift();
 
-  ensureDestMarker(s);
+  syncDestMarker(s);
   if (!leafletMap && !ui.canvas.hidden) drawCanvasTrack();
 }
 
@@ -469,7 +529,8 @@ function appendLog(message) {
     : (message.text || message.kind || 'event');
 
   if (message.kind === 'hard_brake' || message.kind === 'sudden_stop') {
-    addBrakeDot(message.latitude, message.longitude);
+    const label = message.kind === 'sudden_stop' ? 'Sudden stop' : 'Hard brake';
+    addBrakeDot(message.latitude, message.longitude, message.text || label);
   }
 }
 
@@ -492,10 +553,19 @@ function escapeHtml(value) {
 /* ---------- rendering ---------- */
 
 function formatRemaining(s) {
-  if (!s.destination_latitude && !s.remaining_m) return '—';
+  const kind = destinationKind(s);
+  if (kind === 'none') return 'No destination';
   if (s.remaining_m < 80) return 'arrived';
   if (s.remaining_m < 1000) return `${s.remaining_m.toFixed(0)} m`;
   return `${(s.remaining_m / 1000).toFixed(2)} km`;
+}
+
+function destinationKind(s) {
+  if (s.destination_kind === 'route' || s.destination_kind === 'straight' || s.destination_kind === 'none') {
+    return s.destination_kind;
+  }
+  if (s.destination_latitude || s.destination_longitude) return 'route';
+  return 'none';
 }
 
 function formatEta(s) {
@@ -534,7 +604,18 @@ function render(s) {
 
   ui.distance.textContent = (s.distance_m / 1000).toFixed(2);
   ui.remaining.textContent = formatRemaining(s);
-  ui.eta.textContent = formatEta(s);
+  const destKind = destinationKind(s);
+  ui.remainKind.textContent = destKind === 'straight'
+    ? 'Straight line to the pin'
+    : destKind === 'route'
+      ? 'Along the route'
+      : 'Open ride';
+  ui.eta.textContent = destKind === 'none' ? '—' : formatEta(s);
+  ui.destination.textContent = destKind === 'none'
+    ? 'No destination'
+    : destKind === 'straight'
+      ? 'Dropped pin'
+      : (routeDestinationName || 'Destination');
   ui.gradient.textContent = s.gradient_pct.toFixed(1);
   ui.altitude.textContent = s.altitude_m.toFixed(0);
   ui.heading.textContent = s.heading_deg.toFixed(0);
@@ -565,8 +646,8 @@ function render(s) {
 }
 
 function maybeRecap(s) {
-  if (recapShown || !s.destination_latitude) return;
-  if (s.distance_m < 200 || s.remaining_m >= 80) return;
+  if (recapShown || destinationKind(s) === 'none') return;
+  if (!s.destination_latitude || s.distance_m < 200 || s.remaining_m >= 80) return;
   showRecap(s);
 }
 
@@ -755,7 +836,7 @@ async function loadIdentity() {
       ? `${data.helmet_id} · ${data.sensor_backend}`
       : data.helmet_id;
     if (data.route) ui.route.textContent = data.route;
-    if (data.destination) ui.destination.textContent = data.destination;
+    if (data.destination) routeDestinationName = data.destination;
     if (data.tile_source) setTileSource(data.tile_source === 'none' ? 'none' : data.tile_source);
     if (data.voice) {
       ui.voiceArmed.hidden = false;
@@ -876,6 +957,17 @@ ui.alertCancel.addEventListener('click', cancelSos);
 ui.recapDismiss.addEventListener('click', hideRecap);
 ui.directorToggle.addEventListener('click', () => {
   ui.director.hidden = !ui.director.hidden;
+});
+ui.setDest.addEventListener('click', () => {
+  armDestination = !armDestination;
+  ui.setDest.classList.toggle('armed', armDestination);
+  ui.setDest.textContent = armDestination ? 'Click the map' : 'Set destination';
+});
+ui.clearDest.addEventListener('click', async () => {
+  armDestination = false;
+  ui.setDest.classList.remove('armed');
+  ui.setDest.textContent = 'Set destination';
+  await fetch('/api/destination/clear', { method: 'POST' });
 });
 
 /* ---------- dynamics page ---------- */
@@ -1370,8 +1462,32 @@ async function openSavedRide(rideId, button) {
   document.getElementById('rideDetailStats').innerHTML = stats
     .map(([label, value]) => `<div><dt>${label}</dt><dd>${value}</dd></div>`)
     .join('');
+  try {
+    const hazardResponse = await fetch(`/api/hazards?ride_id=${encodeURIComponent(rideId)}`);
+    if (hazardResponse.ok) {
+      const logged = (await hazardResponse.json()).hazards || [];
+      if (logged.length) {
+        const names = logged.map((item) => item.hazard_type).join(', ');
+        document.getElementById('rideDetailStats').insertAdjacentHTML(
+          'beforeend',
+          `<div><dt>Hazards</dt><dd>${escapeHtml(names)}</dd></div>`,
+        );
+      }
+    }
+  } catch { /* charts still draw */ }
   reviewRows = (payload.samples || []).map(sampleToRow);
   requestAnimationFrame(drawSavedCharts);
+}
+
+async function loadHazards() {
+  try {
+    const response = await fetch('/api/hazards');
+    if (!response.ok) return;
+    const data = await response.json();
+    (data.hazards || []).forEach((hazard) => {
+      addHazardDot(hazard.latitude, hazard.longitude, hazard.hazard_type);
+    });
+  } catch { /* the map still works with no saved hazards */ }
 }
 
 // Tile source has to be known before the map is built, so this one is awaited.
@@ -1381,5 +1497,6 @@ loadMapConfig().then(() => {
   loadSos();
   loadEvents();
   loadDirector();
+  loadHazards();
   return loadHistory();
 }).then(connect);

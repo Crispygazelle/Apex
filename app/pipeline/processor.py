@@ -43,6 +43,7 @@ class Processor:
         self.origin: GeoOrigin | None = None
         self.destination: tuple[float, float] | None = None
         self.route_length_m: float = 0.0
+        self.destination_kind: str = "none"
         self._last_accel_enu: tuple[float, float] = (0.0, 0.0)
         self._heading_deg = 0.0
         self._altitude_m = 0.0
@@ -245,6 +246,7 @@ class Processor:
                 remaining_m=remaining_m,
                 destination_latitude=dest_lat,
                 destination_longitude=dest_lon,
+                destination_kind=self.destination_kind if self.destination is not None else "none",
             ),
             system_state=self.system_state,
             gps_valid=self._gps_valid,

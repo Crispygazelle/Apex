@@ -68,6 +68,7 @@ class Coordinator:
         if route is not None and route.destination is not None:
             self.processor.destination = route.destination
             self.processor.route_length_m = route.route_length_m
+            self.processor.destination_kind = "route" if route.route_length_m > 0 else "straight"
         self.queue: asyncio.Queue[SensorReading] = asyncio.Queue(
             maxsize=max(64, config.pipeline.queue_size)
         )

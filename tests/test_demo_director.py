@@ -178,3 +178,32 @@ def test_say_rejects_an_empty_or_oversized_phrase(config: AppConfig) -> None:
     client = TestClient(create_app(coordinator, TelemetryHub()))
     assert client.post("/api/demo/say?text=").status_code == 422
     assert client.post(f"/api/demo/say?text={'x' * 500}").status_code == 422
+
+
+def test_cancelling_a_rehearsal_lets_the_bike_move_again() -> None:
+    """I'm OK clears the scripted stop. The route speed comes back."""
+    simulator = RideSimulator(nagpur_airport_profile())
+    simulator.state_at(40.0)
+    cruising = simulator.state_at(41.0).speed_mps
+    assert cruising > 10.0
+
+    simulator.inject_crash()
+    stopped = simulator.state_at(48.0).speed_mps
+    assert stopped < 2.0
+
+    simulator.resume_after_rehearsal()
+    recovered = simulator.state_at(70.0).speed_mps
+    assert recovered > 8.0
+
+
+def test_a_dropped_pin_is_straight_line_and_clear_removes_it(config: AppConfig) -> None:
+    coordinator = Coordinator(config, ride_id="ride-test", include_mic=False)
+    client = TestClient(create_app(coordinator, TelemetryHub()))
+    placed = client.post("/api/destination?latitude=21.1&longitude=79.1")
+    assert placed.status_code == 200
+    assert coordinator.processor.destination_kind == "straight"
+    assert coordinator.processor.destination == (21.1, 79.1)
+
+    cleared = client.post("/api/destination/clear")
+    assert cleared.json()["destination_kind"] == "none"
+    assert coordinator.processor.destination is None

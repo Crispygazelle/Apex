@@ -420,6 +420,10 @@ class RideSimulator:
         self.profile.crash_at_s = self._t
         return self._t
 
+    def resume_after_rehearsal(self) -> None:
+        """The rider is OK. Drop the scripted stop so the route speed returns."""
+        self.profile.crash_at_s = None
+
     def pothole_force(self) -> tuple[float, float]:
         """Body-frame accel bump if the wheel is on a scripted pothole."""
         width_m = 1.4

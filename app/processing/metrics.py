@@ -179,6 +179,7 @@ class MetricsCalculator:
         remaining_m: float = 0.0,
         destination_latitude: float = 0.0,
         destination_longitude: float = 0.0,
+        destination_kind: str = "none",
     ) -> RideMetrics:
         speed_kmh = speed_mps * 3.6
         self._max_speed_kmh = max(self._max_speed_kmh, speed_kmh)
@@ -198,6 +199,7 @@ class MetricsCalculator:
             remaining_m=remaining_m,
             destination_latitude=destination_latitude,
             destination_longitude=destination_longitude,
+            destination_kind=destination_kind,
         )
 
 

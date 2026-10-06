@@ -39,6 +39,7 @@ from app.sensors.recording import (
 from app.sensors.simulated import RideProfile, RideSimulator
 from app.storage.batch_writer import BatchWriter
 from app.storage.influxdb import InfluxWriter
+from app.storage.hazard_log import HazardLog
 from app.storage.ride_archive import RideArchive
 from app.streaming.websocket import TelemetryHub
 from app.voice.assistant import VoiceAssistant
@@ -212,6 +213,7 @@ class ApexNode:
     director: RideDirector | None = None
     recorder: RideRecorder | None = None
     ride_archive: RideArchive | None = None
+    hazard_log: HazardLog | None = None
     _server_task: asyncio.Task[None] | None = field(default=None, init=False)
     _server: Any = field(default=None, init=False)
 
@@ -245,6 +247,7 @@ class ApexNode:
             self.voice,
             event_log=self.event_log,
             ride_archive=self.ride_archive,
+            hazard_log=self.hazard_log,
         )
         server_config = uvicorn.Config(
             app,
@@ -411,6 +414,7 @@ def build_node(
         destination_name=route.destination_name if route is not None else "",
     )
     coordinator.subscribe_sample(node.ride_archive.submit)
+    node.hazard_log = HazardLog(Path(config.node.data_dir) / "hazards.jsonl")
 
     if config.safety.enabled:
         # Subscribes itself in start(), after storage and streaming exist, so a
@@ -425,6 +429,7 @@ def build_node(
             coordinator,
             safety=node.safety,
             batch_writer=node.batch_writer,
+            hazard_log=node.hazard_log,
         )
 
     if node.hub is not None:
