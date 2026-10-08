@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>APEX</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #07080c;
+    --text: #eef2f6;
+    --muted: #8b95a2;
+    --accent: #f0883e;
+    --border: rgba(255, 255, 255, 0.1);
+    --bad: #ffb4b0;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    display: grid;
+    place-items: center;
+    background:
+      radial-gradient(900px 480px at 50% -10%, rgba(240, 136, 62, 0.16), transparent 60%),
+      var(--bg);
+    color: var(--text);
+    font: 16px/1.45 "IBM Plex Sans", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  }
+  main { width: min(880px, calc(100% - 40px)); }
+  .mark {
+    letter-spacing: 0.28em;
+    color: var(--accent);
+    font-size: 13px;
+    font-weight: 600;
+  }
+  h1 {
+    margin: 10px 0 6px;
+    font-size: clamp(32px, 5vw, 48px);
+    font-weight: 560;
+    letter-spacing: -0.04em;
+  }
+  .lead { margin: 0 0 28px; color: var(--muted); max-width: 36rem; }
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  button.card {
+    text-align: left;
+    font: inherit;
+    color: inherit;
+    padding: 22px 22px 20px;
+    border-radius: 22px;
+    border: 1px solid var(--border);
+    background: rgba(16, 20, 28, 0.72);
+    backdrop-filter: blur(22px) saturate(1.2);
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+    cursor: pointer;
+  }
+  button.card:hover { border-color: rgba(240, 136, 62, 0.55); }
+  button.card strong { display: block; font-size: 22px; font-weight: 560; letter-spacing: -0.03em; }
+  button.card span { display: block; margin-top: 8px; color: var(--muted); font-size: 14px; }
+  .note {
+    min-height: 1.4em;
+    margin: 18px 0 0;
+    color: var(--bad);
+  }
+  .starting { color: var(--muted); }
+  @media (max-width: 720px) {
+    .cards { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <div class="mark">APEX</div>
+  <h1>How should this ride start?</h1>
+  <p class="lead">The helmet sensors and the simulated Nagpur ride are the same dashboard after this.</p>
+  <div class="cards">
+    <button id="hardware" class="card" type="button">
+      <strong>Ride on this Pi</strong>
+      <span>MPU6050, GPS, and the microphone.</span>
+    </button>
+    <button id="sim" class="card" type="button">
+      <strong>Simulate a ride</strong>
+      <span>Sitabuldi to the airport. No sensors required.</span>
+    </button>
+  </div>
+  <p id="note" class="note"></p>
+</main>
+<script>
+const note = document.getElementById('note');
+
+async function choose(mode) {
+  note.className = 'note';
+  const response = await fetch('/api/session', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    note.textContent = body.detail || 'This action requires hardware which is not connected.';
+    return;
+  }
+  note.className = 'note starting';
+  note.textContent = 'Starting the ride…';
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    try {
+      const health = await fetch('/api/health', { cache: 'no-store' });
+      if (health.ok) {
+        location.replace('/?started=' + Date.now());
+        return;
+      }
+    } catch { /* the server is switching over */ }
+  }
+  note.className = 'note';
+  note.textContent = 'The ride did not start. Check the terminal.';
+}
+
+document.getElementById('hardware').addEventListener('click', () => choose('hardware'));
+document.getElementById('sim').addEventListener('click', () => choose('sim'));
+</script>
+</body>
+</html>

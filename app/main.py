@@ -30,6 +30,7 @@ from app.pipeline.coordinator import Coordinator
 from app.pipeline.events import EventLog, RideDirector
 from app.safety.monitor import SafetyMonitor
 from app.sensors.demo import nagpur_airport_profile, nagpur_sprint_profile
+from app.sensors.probe import probe_hardware
 from app.sensors.recording import (
     RECORDED_SOURCES,
     RecordingMeta,
@@ -449,9 +450,80 @@ def build_node(
     return node
 
 
+def needs_chooser(args: argparse.Namespace, config: AppConfig) -> bool:
+    """The gate appears only for an interactive dashboard with no backend yet.
+
+    The Pi service passes --backend hardware. A sprint, a scripted crash, a
+    replay, or a recording already decided what the sensors are.
+    """
+    if not config.dashboard.enabled:
+        return False
+    if args.backend is not None or args.replay or args.record or args.demo_sprint:
+        return False
+    if args.simulate_crash is not None:
+        return False
+    return True
+
+
+async def choose_backend(config: AppConfig) -> str | None:
+    """Serve the glass gate until the rider picks, or Ctrl-C."""
+    import uvicorn
+
+    from app.dashboard.chooser import create_chooser
+
+    chosen: dict[str, str | None] = {"mode": None}
+
+    def on_choose(mode: str) -> None:
+        chosen["mode"] = mode
+
+    app = create_chooser(probe_hardware(config), on_choose)
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host=config.dashboard.host,
+            port=config.dashboard.port,
+            log_level="warning",
+            access_log=False,
+        )
+    )
+    server.install_signal_handlers = lambda: None
+    task = asyncio.create_task(server.serve(), name="apex-chooser")
+    logger.info(
+        "Choose a ride at http://%s:%d",
+        config.dashboard.host,
+        config.dashboard.port,
+    )
+
+    def stop_gate() -> None:
+        server.should_exit = True
+
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, stop_gate)
+        except NotImplementedError:  # pragma: no cover - Windows
+            signal.signal(sig, lambda *_: stop_gate())
+
+    while chosen["mode"] is None and not server.should_exit:
+        await asyncio.sleep(0.05)
+    # Let the browser receive the POST before the port is torn down.
+    await asyncio.sleep(0.2)
+    server.should_exit = True
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    return chosen["mode"]
+
+
 async def async_main(args: argparse.Namespace) -> int:
     config = resolve_config(args)
     configure_logging(config.node.log_level)
+
+    if needs_chooser(args, config):
+        mode = await choose_backend(config)
+        if mode is None:
+            return 0
+        config.node.sensor_backend = mode
+        logger.info("Ride start: %s", mode)
 
     node = build_node(
         config,
