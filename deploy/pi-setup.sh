@@ -16,6 +16,19 @@ if [[ ! -e /proc/device-tree/model ]] || ! grep -qi "raspberry pi" /proc/device-
   die "this is not a Raspberry Pi; refusing to change boot config"
 fi
 
+echo "==> Installing system packages"
+# pyaudio has no aarch64 wheel on PyPI, so pip compiles it against the
+# PortAudio headers (portaudio19-dev). python3-dev and build-essential cover
+# any other source builds; swig + liblgpio-dev cover lgpio if pip has to build
+# it. i2c-tools and alsa-utils provide the i2cdetect / arecord checks below.
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y --no-install-recommends \
+  python3-venv python3-dev build-essential \
+  portaudio19-dev libasound2-dev \
+  swig liblgpio-dev \
+  i2c-tools alsa-utils rsync curl ca-certificates
+
 echo "==> Enabling I2C, UART (no console), and I2S"
 if command -v raspi-config >/dev/null; then
   raspi-config nonint do_i2c 0
@@ -72,8 +85,9 @@ echo "==> Installing package extras: base + pi + voice"
 "$INSTALL_ROOT/.venv/bin/pip" install -e "$INSTALL_ROOT[pi,voice]"
 
 echo "==> Fetching speech models"
-sudo -u "$SERVICE_USER" bash "$INSTALL_ROOT/scripts/fetch_models.sh" || \
-  bash "$INSTALL_ROOT/scripts/fetch_models.sh"
+# Run as root: $INSTALL_ROOT is still root-owned here, so the service user
+# cannot create models/. The chown below hands everything to $SERVICE_USER.
+bash "$INSTALL_ROOT/scripts/fetch_models.sh"
 chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_ROOT"
 
 echo "==> Installing systemd unit"
