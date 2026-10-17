@@ -19,12 +19,11 @@ from app.sensors.base import SensorError
 from app.sensors.demo import nagpur_airport_profile
 from app.sensors.recording import (
     RECORDED_SOURCES,
-    Recording,
     RecordingMeta,
     RideRecorder,
     load_recording,
 )
-from app.sensors.simulated import SimulatedGps, SimulatedImu, RideSimulator
+from app.sensors.simulated import RideSimulator
 
 from .harness import VirtualClock, run_offline_ride
 

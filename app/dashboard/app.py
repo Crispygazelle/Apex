@@ -108,7 +108,9 @@ def create_app(
         }
 
     tile_dir = Path(coordinator.config.dashboard.tile_cache_dir or "")
-    sample_tile = next(iter(sorted(tile_dir.glob("*/*/*.png"))), None) if tile_dir.is_dir() else None
+    sample_tile = (
+        next(iter(sorted(tile_dir.glob("*/*/*.png"))), None) if tile_dir.is_dir() else None
+    )
     tiles_available = sample_tile is not None
     # Tile paths are stable, so a browser that cached them once will keep them
     # even after the cache on disk is refilled from a different provider. The

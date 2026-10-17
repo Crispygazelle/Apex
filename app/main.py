@@ -20,8 +20,8 @@ import contextlib
 import logging
 import signal
 import sys
-from pathlib import Path
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from app.config import AppConfig, load_config
@@ -38,8 +38,8 @@ from app.sensors.recording import (
 )
 from app.sensors.simulated import RideProfile, RideSimulator
 from app.storage.batch_writer import BatchWriter
-from app.storage.influxdb import InfluxWriter
 from app.storage.hazard_log import HazardLog
+from app.storage.influxdb import InfluxWriter
 from app.storage.ride_archive import RideArchive
 from app.streaming.websocket import TelemetryHub
 from app.voice.assistant import VoiceAssistant

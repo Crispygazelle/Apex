@@ -145,7 +145,10 @@ def main(argv: list[str] | None = None) -> int:
     lons = [lon for _, lon in points]
     south, north = min(lats), max(lats)
     west, east = min(lons), max(lons)
-    print(f"{Path(args.gpx).name}: {len(points)} points, bbox {south:.4f},{west:.4f} to {north:.4f},{east:.4f}")
+    print(
+        f"{Path(args.gpx).name}: {len(points)} points, "
+        f"bbox {south:.4f},{west:.4f} to {north:.4f},{east:.4f}"
+    )
 
     wanted: list[tuple[int, int, int]] = []
     for zoom in sorted(args.zoom):

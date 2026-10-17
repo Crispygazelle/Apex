@@ -19,7 +19,7 @@ class RidePath:
             raise ValueError("A ride path needs at least two waypoints")
         self.waypoints = [(float(lat), float(lon)) for lat, lon in waypoints]
         self.cum_m = [0.0]
-        for prev, curr in zip(self.waypoints, self.waypoints[1:]):
+        for prev, curr in zip(self.waypoints, self.waypoints[1:], strict=False):
             self.cum_m.append(self.cum_m[-1] + haversine_m(prev[0], prev[1], curr[0], curr[1]))
         self.length_m = self.cum_m[-1]
 
