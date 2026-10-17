@@ -20,9 +20,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-PREEMPT_STATES = frozenset(
-    {SystemState.CRASH_SUSPECTED, SystemState.SOS_ACTIVE}
-)
+PREEMPT_STATES = frozenset({SystemState.CRASH_SUSPECTED, SystemState.SOS_ACTIVE})
 
 
 class CommandHandler:

@@ -148,8 +148,9 @@ def test_websocket_refuses_clients_beyond_capacity(coordinator: Coordinator) -> 
     from app.config import StreamingConfig
 
     hub = TelemetryHub(StreamingConfig(max_clients=1))
-    with TestClient(create_app(coordinator, hub)) as client, client.websocket_connect(
-        "/ws/telemetry"
+    with (
+        TestClient(create_app(coordinator, hub)) as client,
+        client.websocket_connect("/ws/telemetry"),
     ):
         assert hub.client_count == 1
 

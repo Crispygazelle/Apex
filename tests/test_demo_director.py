@@ -25,9 +25,7 @@ from app.streaming.websocket import TelemetryHub
 @pytest.fixture
 def sim_client(config: AppConfig) -> tuple[TestClient, RideSimulator]:
     simulator = RideSimulator(RideProfile(gps_dropouts=[]))
-    coordinator = Coordinator(
-        config, ride_id="ride-test", simulator=simulator, include_mic=False
-    )
+    coordinator = Coordinator(config, ride_id="ride-test", simulator=simulator, include_mic=False)
     return TestClient(create_app(coordinator, TelemetryHub())), simulator
 
 
@@ -50,9 +48,7 @@ def test_pothole_is_placed_ahead_of_the_wheel(
 def test_brake_lowers_the_speed_on_the_demo_route(config: AppConfig) -> None:
     """Uses the real route, because braking is a path-mode capability."""
     simulator = RideSimulator(nagpur_airport_profile())
-    coordinator = Coordinator(
-        config, ride_id="ride-demo", simulator=simulator, include_mic=False
-    )
+    coordinator = Coordinator(config, ride_id="ride-demo", simulator=simulator, include_mic=False)
     client = TestClient(create_app(coordinator, TelemetryHub()))
 
     simulator.state_at(40.0)

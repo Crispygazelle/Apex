@@ -107,9 +107,7 @@ def test_progresses_through_the_expected_states(ride) -> None:  # noqa: ANN001
 def test_dead_reckoning_engages_during_the_gps_dropout(ride) -> None:  # noqa: ANN001
     """The profile blacks GPS out from t=45 s to t=57 s."""
     start = ride.samples[0].timestamp
-    during = [
-        s for s in ride.samples if 50.0 <= (s.timestamp - start) <= 56.0
-    ]
+    during = [s for s in ride.samples if 50.0 <= (s.timestamp - start) <= 56.0]
     assert during
     assert all(s.state.mode is FusionMode.DEAD_RECKONING for s in during)
 
@@ -132,8 +130,7 @@ def test_position_survives_the_dropout_without_diverging(ride) -> None:  # noqa:
     from app.geo import haversine_m
 
     errors = [
-        haversine_m(s.state.latitude, s.state.longitude, t.latitude, t.longitude)
-        for s, t in pairs
+        haversine_m(s.state.latitude, s.state.longitude, t.latitude, t.longitude) for s, t in pairs
     ]
     # Twelve seconds of unaided inertial navigation on a consumer MEMS IMU
     # drifts; it must stay in the tens of metres, not kilometres.
@@ -145,9 +142,7 @@ def test_confidence_falls_during_the_dropout_and_recovers(ride) -> None:  # noqa
 
     def mean_confidence(lo: float, hi: float) -> float:
         window = [
-            s.state.position_confidence
-            for s in ride.samples
-            if lo <= (s.timestamp - start) <= hi
+            s.state.position_confidence for s in ride.samples if lo <= (s.timestamp - start) <= hi
         ]
         return statistics.fmean(window)
 
@@ -158,9 +153,7 @@ def test_confidence_falls_during_the_dropout_and_recovers(ride) -> None:  # noqa
 def test_braking_event_registers_as_deceleration(ride) -> None:  # noqa: ANN001
     """The profile brakes hard around t=65 s (offset by the 4 s standing start)."""
     start = ride.samples[0].timestamp
-    window = [
-        s for s in ride.samples if 66.0 <= (s.timestamp - start) <= 72.0
-    ]
+    window = [s for s in ride.samples if 66.0 <= (s.timestamp - start) <= 72.0]
     assert window
 
     hardest = min(s.metrics.longitudinal_accel_mps2 for s in window)

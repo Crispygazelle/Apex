@@ -19,12 +19,11 @@ from app.sensors.base import SensorError
 from app.sensors.demo import nagpur_airport_profile
 from app.sensors.recording import (
     RECORDED_SOURCES,
-    Recording,
     RecordingMeta,
     RideRecorder,
     load_recording,
 )
-from app.sensors.simulated import SimulatedGps, SimulatedImu, RideSimulator
+from app.sensors.simulated import RideSimulator
 
 from .harness import VirtualClock, run_offline_ride
 
@@ -50,9 +49,7 @@ def test_audio_is_never_recorded(tmp_path: Path) -> None:
     recorder.open()
     recorder(reading(1.0, SensorSource.IMU))
     recorder(
-        SensorReading(
-            timestamp=1.1, source=SensorSource.MIC, payload={"pcm": b"\x01\x02" * 64}
-        )
+        SensorReading(timestamp=1.1, source=SensorSource.MIC, payload={"pcm": b"\x01\x02" * 64})
     )
     recorder.close()
 

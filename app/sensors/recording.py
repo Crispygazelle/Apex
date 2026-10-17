@@ -78,9 +78,7 @@ class RecordingMeta:
             destination_latitude=float(raw.get("destination_latitude", 0.0)),
             destination_longitude=float(raw.get("destination_longitude", 0.0)),
             route_length_m=float(raw.get("route_length_m", 0.0)),
-            voice_script=[
-                (float(at_m), str(text)) for at_m, text in raw.get("voice_script", [])
-            ],
+            voice_script=[(float(at_m), str(text)) for at_m, text in raw.get("voice_script", [])],
         )
 
 
@@ -313,9 +311,7 @@ def load_recording(path: str | Path, *, speed: float = 1.0, loop: bool = False) 
                 )
             )
 
-    recording = Recording(
-        meta=meta, per_source=per_source, speed=max(speed, 0.0), loop=loop
-    )
+    recording = Recording(meta=meta, per_source=per_source, speed=max(speed, 0.0), loop=loop)
     if recording.reading_count == 0:
         raise SensorError(f"{source_path} contains no replayable readings")
     if malformed:
@@ -396,9 +392,7 @@ class _ReplaySensor(Sensor):
         # Position on one continuous timeline, however many passes in we are.
         # Both sensors derive this from the same recorded clock, so they stay in
         # step with each other across a loop boundary without coordinating.
-        offset = (
-            self._cycle * self.recording.cycle_span_s + reading.timestamp - self._rec_start
-        )
+        offset = self._cycle * self.recording.cycle_span_s + reading.timestamp - self._rec_start
 
         if self.recording.paced:
             wall_origin = self.recording.wall_start(self._time())

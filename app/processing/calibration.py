@@ -205,9 +205,7 @@ class Calibrator:
             return
 
         self._gyro_samples.append((raw_gyro[0], raw_gyro[1], raw_gyro[2]))
-        self._accel_magnitudes.append(
-            sqrt(sum(component * component for component in raw_accel))
-        )
+        self._accel_magnitudes.append(sqrt(sum(component * component for component in raw_accel)))
 
         if len(self._gyro_samples) < self.config.stationary_samples:
             return

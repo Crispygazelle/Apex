@@ -23,9 +23,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-QUIET_STATES = frozenset(
-    {SystemState.STARTING, SystemState.CALIBRATING, SystemState.ACQUIRING_GPS}
-)
+QUIET_STATES = frozenset({SystemState.STARTING, SystemState.CALIBRATING, SystemState.ACQUIRING_GPS})
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,11 +127,7 @@ class ThresholdDetector:
                 f"sudden stop, down from {peak:.0f} km/h",
             )
 
-        if (
-            g_force >= self.HIGH_G
-            and accel > self.BRAKE_MPS2
-            and self._ready("high_g", now)
-        ):
+        if g_force >= self.HIGH_G and accel > self.BRAKE_MPS2 and self._ready("high_g", now):
             return self._entry(
                 sample,
                 "high_g",
@@ -179,9 +173,7 @@ class ThresholdDetector:
             extra={
                 "speed_kmh": round(sample.metrics.speed_kmh, 1),
                 "g_force": round(sample.metrics.g_force, 2),
-                "longitudinal_accel_mps2": round(
-                    sample.metrics.longitudinal_accel_mps2, 2
-                ),
+                "longitudinal_accel_mps2": round(sample.metrics.longitudinal_accel_mps2, 2),
             },
         )
 

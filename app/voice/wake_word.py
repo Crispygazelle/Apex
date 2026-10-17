@@ -53,9 +53,7 @@ class WakeWordDetector:
                 return WakeMatch(heard=True, phrase=phrase, remainder="")
             prefix = phrase + " "
             if normalised.startswith(prefix):
-                return WakeMatch(
-                    heard=True, phrase=phrase, remainder=normalised[len(prefix) :]
-                )
+                return WakeMatch(heard=True, phrase=phrase, remainder=normalised[len(prefix) :])
             # Buried in noise: keep the words after the wake phrase.
             token = " " + phrase + " "
             padded = f" {normalised} "

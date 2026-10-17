@@ -39,9 +39,7 @@ class Ride:
 
     def __init__(self, config: SafetyConfig | None = None) -> None:
         self.buffer = TelemetryBuffer(seconds=60.0, expected_rate_hz=RATE_HZ)
-        self.detector = CrashDetector(
-            config or SafetyConfig(), self.buffer, ride_id="ride-test"
-        )
+        self.detector = CrashDetector(config or SafetyConfig(), self.buffer, ride_id="ride-test")
         self.t = 0.0
         self.events = []
 

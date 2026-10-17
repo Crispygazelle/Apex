@@ -144,9 +144,7 @@ def test_path_corners_do_not_unwind_lean() -> None:
     from app.config import AppConfig
     from tests.harness import run_offline_ride
 
-    result = run_offline_ride(
-        AppConfig(), duration_s=45.0, profile=nagpur_airport_profile()
-    )
+    result = run_offline_ride(AppConfig(), duration_s=45.0, profile=nagpur_airport_profile())
     leans = [abs(sample.metrics.lean_angle_deg) for sample in result.samples]
     assert leans
     assert max(leans) < 70.0, f"lean wound up to {max(leans):.1f}°"

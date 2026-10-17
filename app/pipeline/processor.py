@@ -197,9 +197,7 @@ class Processor:
         speed = filter_state.speed_mps
 
         if self.origin is not None:
-            latitude, longitude = self.origin.to_geodetic(
-                filter_state.east_m, filter_state.north_m
-            )
+            latitude, longitude = self.origin.to_geodetic(filter_state.east_m, filter_state.north_m)
         else:
             latitude = longitude = 0.0
 

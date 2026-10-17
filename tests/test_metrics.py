@@ -102,9 +102,7 @@ def test_lean_comes_from_the_gyro_and_tracks_a_steady_corner() -> None:
 
     # Roll in over one second, then hold the corner.
     for _ in range(100):
-        metrics.ingest_imu(
-            calibrated(gx=target_lean, gz=yaw_rate, dt=0.01), speed_mps=speed
-        )
+        metrics.ingest_imu(calibrated(gx=target_lean, gz=yaw_rate, dt=0.01), speed_mps=speed)
     for _ in range(1000):
         metrics.ingest_imu(calibrated(gx=0.0, gz=yaw_rate, dt=0.01), speed_mps=speed)
 
@@ -163,9 +161,7 @@ def test_gradient_recovers_a_real_slope() -> None:
             metrics.ingest_imu(calibrated(dt=0.01), speed_mps=10.0)
         distance = metrics.snapshot(10.0).distance_m
         latitude, longitude = origin.to_geodetic(0.0, distance)
-        metrics.ingest_gps(
-            latitude, longitude, 920.0 + 0.05 * distance, speed_mps=10.0, valid=True
-        )
+        metrics.ingest_gps(latitude, longitude, 920.0 + 0.05 * distance, speed_mps=10.0, valid=True)
 
     assert metrics.snapshot(10.0).gradient_pct == pytest.approx(5.0, abs=0.5)
 

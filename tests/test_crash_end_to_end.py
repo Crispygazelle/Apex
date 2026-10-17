@@ -121,9 +121,7 @@ def test_the_helmet_really_does_go_quiet_after_the_impact(
     ride_start = result.samples[0].timestamp
 
     settled = [
-        sample
-        for sample in result.samples
-        if sample.timestamp - ride_start > CRASH_AT_S + 3.0
+        sample for sample in result.samples if sample.timestamp - ride_start > CRASH_AT_S + 3.0
     ]
     assert settled, "ride must continue past the crash"
 

@@ -20,8 +20,8 @@ import contextlib
 import logging
 import signal
 import sys
-from pathlib import Path
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from app.config import AppConfig, load_config
@@ -38,8 +38,8 @@ from app.sensors.recording import (
 )
 from app.sensors.simulated import RideProfile, RideSimulator
 from app.storage.batch_writer import BatchWriter
-from app.storage.influxdb import InfluxWriter
 from app.storage.hazard_log import HazardLog
+from app.storage.influxdb import InfluxWriter
 from app.storage.ride_archive import RideArchive
 from app.streaming.websocket import TelemetryHub
 from app.voice.assistant import VoiceAssistant
@@ -173,9 +173,7 @@ class ConsoleReporter:
         metrics = sample.metrics
         state = sample.state
         remaining = (
-            f"  eta {metrics.remaining_m / 1000.0:5.2f} km"
-            if metrics.remaining_m > 0
-            else ""
+            f"  eta {metrics.remaining_m / 1000.0:5.2f} km" if metrics.remaining_m > 0 else ""
         )
         line = (
             f"{sample.system_state.value:<15} "
@@ -370,9 +368,7 @@ def build_node(
                 logger.info("Sim ride (sprint): %s", simulator.profile.route_name)
             elif simulate_crash_at is not None:
                 simulator = RideSimulator(RideProfile(crash_at_s=simulate_crash_at))
-                logger.warning(
-                    "Scripted crash at t+%.1fs; this is a rehearsal", simulate_crash_at
-                )
+                logger.warning("Scripted crash at t+%.1fs; this is a rehearsal", simulate_crash_at)
             else:
                 simulator = RideSimulator(nagpur_airport_profile())
                 logger.info("Sim ride: %s", simulator.profile.route_name)

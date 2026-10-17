@@ -286,8 +286,10 @@ class RideSimulator:
             delta = target - self._speed
             limit = p.max_accel_mps2 if delta >= 0.0 else p.max_brake_mps2
             max_step = limit * step
-            new_speed = target if abs(delta) <= max_step else self._speed + (
-                max_step if delta > 0.0 else -max_step
+            new_speed = (
+                target
+                if abs(delta) <= max_step
+                else self._speed + (max_step if delta > 0.0 else -max_step)
             )
             new_speed = max(0.0, new_speed)
             self._accel = (new_speed - self._speed) / step if step > 0.0 else 0.0

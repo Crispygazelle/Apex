@@ -32,13 +32,9 @@ def _have_say() -> bool:
     return shutil.which("say") is not None and shutil.which("afconvert") is not None
 
 
-needs_vosk = pytest.mark.skipif(
-    not VOSK_MODEL.exists(), reason="run scripts/fetch_models.sh"
-)
+needs_vosk = pytest.mark.skipif(not VOSK_MODEL.exists(), reason="run scripts/fetch_models.sh")
 needs_say = pytest.mark.skipif(not _have_say(), reason="macOS say/afconvert required")
-needs_piper = pytest.mark.skipif(
-    not PIPER_MODEL.exists(), reason="run scripts/fetch_models.sh"
-)
+needs_piper = pytest.mark.skipif(not PIPER_MODEL.exists(), reason="run scripts/fetch_models.sh")
 
 
 @pytest.fixture(scope="module")
