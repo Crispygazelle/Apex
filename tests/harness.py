@@ -61,8 +61,7 @@ class RideResult:
         return [
             (sample, truth)
             for sample, truth in zip(self.samples, self.truth, strict=True)
-            if sample.timestamp - start >= after_s
-            and (mode is None or sample.state.mode is mode)
+            if sample.timestamp - start >= after_s and (mode is None or sample.state.mode is mode)
         ]
 
     def position_errors_m(

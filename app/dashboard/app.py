@@ -74,9 +74,7 @@ def create_app(
         payload: dict[str, Any] = {"pipeline": coordinator.stats(), "streaming": hub.stats()}
         payload["safety"] = safety.stats() if safety is not None else {"enabled": False}
         payload["voice"] = (
-            {"enabled": True, **voice.stats.as_dict()}
-            if voice is not None
-            else {"enabled": False}
+            {"enabled": True, **voice.stats.as_dict()} if voice is not None else {"enabled": False}
         )
         payload["storage"] = (
             {
@@ -288,9 +286,7 @@ def create_app(
     ) -> dict[str, Any]:
         """Demand a hard stop now, for the red trail and the brake marker."""
         try:
-            _require_simulator().inject_brake(
-                target_mps=target_kmh / 3.6, duration_s=duration_s
-            )
+            _require_simulator().inject_brake(target_mps=target_kmh / 3.6, duration_s=duration_s)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         logger.info("Demo: braking to %.0f km/h for %.1fs", target_kmh, duration_s)

@@ -130,9 +130,7 @@ def main(argv: list[str] | None = None) -> int:
         default=list(DEFAULT_ZOOMS),
         help="zoom levels to cache",
     )
-    parser.add_argument(
-        "--dry-run", action="store_true", help="report the tile count and exit"
-    )
+    parser.add_argument("--dry-run", action="store_true", help="report the tile count and exit")
     parser.add_argument(
         "--force",
         action="store_true",

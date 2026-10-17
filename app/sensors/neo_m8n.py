@@ -53,8 +53,7 @@ class NeoM8n(Sensor):
             import serial
         except ImportError as exc:  # pragma: no cover - hardware path
             raise SensorError(
-                "pyserial/pynmea2 are not installed. Install the Pi extras: "
-                "pip install -e '.[pi]'"
+                "pyserial/pynmea2 are not installed. Install the Pi extras: pip install -e '.[pi]'"
             ) from exc
 
         self._nmea = pynmea2

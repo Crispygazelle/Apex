@@ -49,9 +49,7 @@ def test_audio_is_never_recorded(tmp_path: Path) -> None:
     recorder.open()
     recorder(reading(1.0, SensorSource.IMU))
     recorder(
-        SensorReading(
-            timestamp=1.1, source=SensorSource.MIC, payload={"pcm": b"\x01\x02" * 64}
-        )
+        SensorReading(timestamp=1.1, source=SensorSource.MIC, payload={"pcm": b"\x01\x02" * 64})
     )
     recorder.close()
 

@@ -59,8 +59,6 @@ def test_pothole_g_spike_is_not_a_brake() -> None:
 def test_quiet_states_are_ignored() -> None:
     detector = ThresholdDetector()
     assert (
-        detector.observe(
-            sample(1.0, speed_kmh=80.0, accel=-5.0, state=SystemState.CALIBRATING)
-        )
+        detector.observe(sample(1.0, speed_kmh=80.0, accel=-5.0, state=SystemState.CALIBRATING))
         is None
     )

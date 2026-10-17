@@ -105,15 +105,9 @@ def build_sensors(
     sim = simulator or RideSimulator()
     sensor_set.simulator = sim
     if config.sensors.imu.enabled:
-        sensor_set.sensors.append(
-            SimulatedImu(config.sensors.imu, sim, time_source=time_source)
-        )
+        sensor_set.sensors.append(SimulatedImu(config.sensors.imu, sim, time_source=time_source))
     if config.sensors.gps.enabled:
-        sensor_set.sensors.append(
-            SimulatedGps(config.sensors.gps, sim, time_source=time_source)
-        )
+        sensor_set.sensors.append(SimulatedGps(config.sensors.gps, sim, time_source=time_source))
     if want_mic:
-        sensor_set.sensors.append(
-            SimulatedMic(config.sensors.mic, sim, time_source=time_source)
-        )
+        sensor_set.sensors.append(SimulatedMic(config.sensors.mic, sim, time_source=time_source))
     return sensor_set

@@ -202,9 +202,7 @@ async def test_stats_report_what_happened(monitor) -> None:
     await safety.stop()
 
 
-async def test_a_crash_is_written_to_disk_even_without_influx(
-    config: AppConfig, tmp_path
-) -> None:
+async def test_a_crash_is_written_to_disk_even_without_influx(config: AppConfig, tmp_path) -> None:
     """The card pulled from a wreck must carry the record."""
     from app.storage.batch_writer import CRASH_LOG_NAME, BatchWriter
     from app.storage.influxdb import InfluxWriter

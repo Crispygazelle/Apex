@@ -13,9 +13,7 @@ from app.sensors.gpx import load_gpx
 from app.sensors.path import RidePath
 from app.sensors.simulated import RideProfile
 
-GPX_PATH = (
-    Path(__file__).resolve().parents[2] / "config" / "rides" / "nagpur-sitabuldi-airport.gpx"
-)
+GPX_PATH = Path(__file__).resolve().parents[2] / "config" / "rides" / "nagpur-sitabuldi-airport.gpx"
 
 # Target speeds along the GPX, in metres and m/s.
 # Fast stretches sit on the straighter Ambazari / Airport Road sections;
@@ -76,9 +74,7 @@ def nagpur_airport_profile() -> RideProfile:
 SPRINT_LENGTH_M = 1180.0
 
 
-def clip_waypoints(
-    waypoints: list[tuple[float, float]], max_m: float
-) -> list[tuple[float, float]]:
+def clip_waypoints(waypoints: list[tuple[float, float]], max_m: float) -> list[tuple[float, float]]:
     """Keep the start of a polyline and stop on the road at `max_m`."""
     path = RidePath(waypoints)
     if path.length_m <= max_m:

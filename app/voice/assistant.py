@@ -190,9 +190,7 @@ class VoiceAssistant:
 
         if not self._utterance.chunks:
             return
-        quiet_long_enough = (
-            now - self._utterance.last_voice >= self.config.voice.endpoint_silence_s
-        )
+        quiet_long_enough = now - self._utterance.last_voice >= self.config.voice.endpoint_silence_s
         timed_out = now - self._utterance.started >= self.config.voice.command_timeout_s
         if quiet_long_enough or timed_out:
             await self._finish_utterance(sample_rate, require_wake=False)
@@ -240,9 +238,7 @@ class VoiceAssistant:
         blob = self._utterance.take()
         self._utterance = _Utterance()
         text = self._transcribe(blob, sample_rate)
-        self.phase = (
-            SessionPhase.PREEMPTED if self.commands.preempted else SessionPhase.IDLE
-        )
+        self.phase = SessionPhase.PREEMPTED if self.commands.preempted else SessionPhase.IDLE
         if not text:
             return
         await self._dispatch(text, require_wake=require_wake)
@@ -276,9 +272,7 @@ class VoiceAssistant:
 
         reply = await self.commands.handle(intent)
         self.stats.last_reply = reply
-        self.phase = (
-            SessionPhase.PREEMPTED if self.commands.preempted else SessionPhase.IDLE
-        )
+        self.phase = SessionPhase.PREEMPTED if self.commands.preempted else SessionPhase.IDLE
         await self._publish_exchange(text, reply, intent)
         await self.speaker.speak(reply)
         return reply

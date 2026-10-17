@@ -213,9 +213,7 @@ class CrashDetector:
 
         lost_enough = drop >= self.config.speed_drop_kmh
         came_to_a_stop = (
-            before >= MIN_SPEED_KMH
-            and after <= STOPPED_KMH
-            and drop >= before * COLLAPSE_FRACTION
+            before >= MIN_SPEED_KMH and after <= STOPPED_KMH and drop >= before * COLLAPSE_FRACTION
         )
 
         if not (lost_enough or came_to_a_stop):
@@ -226,9 +224,8 @@ class CrashDetector:
             return self._reject(sample, reason)
 
         evidence = "stopped dead" if came_to_a_stop and not lost_enough else f"{drop:.1f} km/h lost"
-        reason = (
-            f"{self._peak_g:.1f} g, {evidence}, "
-            + ("helmet at rest" if still else "prolonged violent motion")
+        reason = f"{self._peak_g:.1f} g, {evidence}, " + (
+            "helmet at rest" if still else "prolonged violent motion"
         )
         return self._confirm(sample, reason)
 

@@ -247,8 +247,10 @@ def test_a_truncated_spool_line_does_not_discard_the_file(tmp_path: Path) -> Non
     """A power cut mid-write leaves a partial line; the rest is still good."""
     path = tmp_path / "ride.jsonl"
     path.write_text(
-        json.dumps({"timestamp": 1.0, "ride_id": "r"}) + "\n"
-        + json.dumps({"timestamp": 2.0, "ride_id": "r"}) + "\n"
+        json.dumps({"timestamp": 1.0, "ride_id": "r"})
+        + "\n"
+        + json.dumps({"timestamp": 2.0, "ride_id": "r"})
+        + "\n"
         + '{"timestamp": 3.0, "ride_i',  # cut off by the power loss
         encoding="utf-8",
     )

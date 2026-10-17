@@ -216,9 +216,7 @@ def _pitch_from_gravity(gravity: tuple[float, float, float]) -> float:
     return degrees(atan2(-gx, horizontal))
 
 
-def instantaneous_speed_mps(
-    lat1: float, lon1: float, lat2: float, lon2: float, dt: float
-) -> float:
+def instantaneous_speed_mps(lat1: float, lon1: float, lat2: float, lon2: float, dt: float) -> float:
     """Haversine speed between successive fixes, as the README specifies.
 
     The Kalman filter's velocity estimate is better, but this is the honest

@@ -49,9 +49,7 @@ class InfluxWriter:
             from influxdb_client import InfluxDBClient, Point
             from influxdb_client.client.write_api import SYNCHRONOUS
         except ImportError as exc:
-            self.last_error = (
-                "influxdb-client is not installed; run pip install -e '.' to get it"
-            )
+            self.last_error = "influxdb-client is not installed; run pip install -e '.' to get it"
             logger.warning("%s (%s)", self.last_error, exc)
             self._healthy = False
             return False
