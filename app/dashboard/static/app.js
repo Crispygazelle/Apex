@@ -449,6 +449,10 @@ function pushTrackSample(s) {
 
   const kind = trailKind(s);
   const last = track[track.length - 1];
+  if (last && s.speed_kmh < 1.8) {
+    syncDestMarker(s);
+    return;
+  }
   if (last && Math.abs(last.lat - s.latitude) < 1e-6 && Math.abs(last.lon - s.longitude) < 1e-6) {
     return;
   }

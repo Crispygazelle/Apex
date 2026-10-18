@@ -144,6 +144,11 @@ class RideSimulator:
         # Set by inject_brake; overrides the zone target while it lasts.
         self._brake_until_t = -1.0
         self._brake_target_mps = 0.0
+        self._arrived_t: float | None = None
+
+    @property
+    def arrived(self) -> bool:
+        return self._path is not None and self._distance >= self._path.length_m
 
     @property
     def distance_m(self) -> float:
@@ -151,9 +156,9 @@ class RideSimulator:
 
     @property
     def destination(self) -> tuple[float, float] | None:
-        if self._path is None:
-            return None
-        return self._path.waypoints[-1]
+        if self._path is not None:
+            return self._path.waypoints[-1]
+        return None
 
     @property
     def route_length_m(self) -> float:
@@ -212,6 +217,9 @@ class RideSimulator:
         return self.profile.cruise_mps
 
     def _target_speed(self, t: float, distance_m: float) -> float:
+        if self._path is not None and distance_m >= self._path.length_m:
+            return 0.0
+
         since_crash = self.crash_elapsed(t)
         if since_crash is not None:
             if since_crash >= CRASH_DECEL_S:
@@ -252,6 +260,8 @@ class RideSimulator:
 
     def altitude_at(self, t: float) -> float:
         p = self.profile
+        if self._arrived_t is not None and t >= self._arrived_t:
+            t = self._arrived_t
         u = max(0.0, t - p.stationary_s)
         return p.start_altitude_m + p.hill_amplitude_m * sin(2.0 * pi * u / p.hill_period_s)
 
@@ -281,6 +291,19 @@ class RideSimulator:
 
         while self._t < t:
             step = min(0.005, t - self._t)
+            if self._distance >= path.length_m:
+                if self._arrived_t is None:
+                    self._arrived_t = self._t
+                self._speed = 0.0
+                self._accel = 0.0
+                self._yaw_rate = 0.0
+                self._roll_rate = 0.0
+                self._lean_deg = 0.0
+                latitude, longitude = path.point(path.length_m)
+                self._east, self._north = self._origin.to_enu(latitude, longitude)
+                self._t += step
+                continue
+
             mid = self._t + step / 2.0
             target = self._target_speed(mid, self._distance)
             delta = target - self._speed
@@ -295,6 +318,13 @@ class RideSimulator:
             self._accel = (new_speed - self._speed) / step if step > 0.0 else 0.0
             self._speed = new_speed
             self._distance = min(path.length_m, self._distance + self._speed * step)
+            if self._distance >= path.length_m:
+                self._arrived_t = self._t + step
+                self._speed = 0.0
+                self._accel = 0.0
+                self._yaw_rate = 0.0
+                self._roll_rate = 0.0
+                self._lean_deg = 0.0
 
             latitude, longitude = path.point(self._distance)
             self._east, self._north = self._origin.to_enu(latitude, longitude)
@@ -622,11 +652,24 @@ class SimulatedGps(_SimulatedSensor):
             )
 
         hdop = max(0.7, self._rng.gauss(1.1, 0.2))
-        position_sigma_m = hdop * 2.6
-        origin = GeoOrigin(st.latitude, st.longitude)
-        east_err = self._rng.gauss(0.0, position_sigma_m)
-        north_err = self._rng.gauss(0.0, position_sigma_m)
-        latitude, longitude = origin.to_geodetic(east_err, north_err)
+        if self.simulator.arrived:
+            latitude, longitude = st.latitude, st.longitude
+            altitude_m = st.altitude_m
+            speed_mps = 0.0
+            course_deg = st.heading_deg % 360.0
+        else:
+            position_sigma_m = hdop * 2.6
+            origin = GeoOrigin(st.latitude, st.longitude)
+            east_err = self._rng.gauss(0.0, position_sigma_m)
+            north_err = self._rng.gauss(0.0, position_sigma_m)
+            latitude, longitude = origin.to_geodetic(east_err, north_err)
+            altitude_m = st.altitude_m + self._rng.gauss(0.0, 4.0)
+            speed_mps = (
+                0.0
+                if st.speed_mps <= 0.0
+                else max(0.0, st.speed_mps + self._rng.gauss(0.0, 0.3))
+            )
+            course_deg = (st.heading_deg + self._rng.gauss(0.0, 2.0)) % 360.0
 
         return SensorReading(
             timestamp=timestamp,
@@ -634,9 +677,9 @@ class SimulatedGps(_SimulatedSensor):
             payload={
                 "latitude": latitude,
                 "longitude": longitude,
-                "altitude_m": st.altitude_m + self._rng.gauss(0.0, 4.0),
-                "speed_mps": max(0.0, st.speed_mps + self._rng.gauss(0.0, 0.3)),
-                "course_deg": (st.heading_deg + self._rng.gauss(0.0, 2.0)) % 360.0,
+                "altitude_m": altitude_m,
+                "speed_mps": speed_mps,
+                "course_deg": course_deg,
                 "satellites": self._rng.randint(8, 12),
                 "hdop": hdop,
                 "valid": True,

@@ -148,3 +148,61 @@ def test_path_corners_do_not_unwind_lean() -> None:
     leans = [abs(sample.metrics.lean_angle_deg) for sample in result.samples]
     assert leans
     assert max(leans) < 70.0, f"lean wound up to {max(leans):.1f}°"
+
+
+def test_path_follower_stops_at_destination() -> None:
+    """Once the simulator reaches path.length_m, speed, distance, and altitude must freeze."""
+    from app.config import GpsConfig
+    from app.sensors.simulated import SimulatedGps
+
+    origin = GeoOrigin(21.14631, 79.08491)
+    east = origin.to_geodetic(200.0, 0.0)
+    profile = RideProfile(
+        start_latitude=origin.latitude,
+        start_longitude=origin.longitude,
+        waypoints=[(origin.latitude, origin.longitude), east],
+        speed_zones=[(0.0, 30_000.0, 10.0)],
+        stationary_s=0.0,
+        spool_up_s=0.05,
+        gps_lock_s=0.0,
+        gps_dropouts=[],
+        max_accel_mps2=20.0,
+        max_brake_mps2=20.0,
+    )
+    now = 1000.0
+    sim = RideSimulator(profile)
+    gps = SimulatedGps(GpsConfig(), sim, time_source=lambda: now)
+    gps.open()
+
+    t = 0.0
+    while t <= 30.0:
+        t += 0.5
+        now = 1000.0 + t
+        sim.state_at(t)
+
+    assert sim.arrived is True
+    arrived_state = sim.state_at(t)
+    assert arrived_state.speed_mps == 0.0
+    assert arrived_state.accel_forward_mps2 == 0.0
+    assert arrived_state.lean_deg == 0.0
+    assert arrived_state.distance_m == pytest.approx(sim.route_length_m or 200.0)
+    arrived_alt = sim.altitude_at(t)
+
+    # Advancing further in time after arrival must keep distance, position, and altitude frozen.
+    later_t = t + 10.0
+    now = 1000.0 + later_t
+    later_state = sim.state_at(later_t)
+    assert later_state.speed_mps == 0.0
+    assert later_state.distance_m == arrived_state.distance_m
+    assert (later_state.latitude, later_state.longitude) == pytest.approx(east, abs=1e-6)
+    assert sim.altitude_at(later_t) == arrived_alt
+
+    reading = gps.read()
+    assert reading is not None
+    assert reading.payload["valid"] is True
+    assert reading.payload["speed_mps"] == 0.0
+    assert (reading.payload["latitude"], reading.payload["longitude"]) == pytest.approx(
+        east, abs=1e-6
+    )
+
+
