@@ -186,14 +186,12 @@ class ConsoleReporter:
             f"sats {sample.satellites:2d}  "
             f"{state.mode.value}"
         )
-        sys.stdout.write("\r" + line.ljust(132))
+        sys.stdout.write(line + "\n")
         sys.stdout.flush()
         self._printed = True
 
     def finish(self) -> None:
-        if self._printed:
-            sys.stdout.write("\n")
-            sys.stdout.flush()
+        pass
 
 
 @dataclass
