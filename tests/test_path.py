@@ -204,5 +204,3 @@ def test_path_follower_stops_at_destination() -> None:
     assert (reading.payload["latitude"], reading.payload["longitude"]) == pytest.approx(
         east, abs=1e-6
     )
-
-

@@ -665,9 +665,7 @@ class SimulatedGps(_SimulatedSensor):
             latitude, longitude = origin.to_geodetic(east_err, north_err)
             altitude_m = st.altitude_m + self._rng.gauss(0.0, 4.0)
             speed_mps = (
-                0.0
-                if st.speed_mps <= 0.0
-                else max(0.0, st.speed_mps + self._rng.gauss(0.0, 0.3))
+                0.0 if st.speed_mps <= 0.0 else max(0.0, st.speed_mps + self._rng.gauss(0.0, 0.3))
             )
             course_deg = (st.heading_deg + self._rng.gauss(0.0, 2.0)) % 360.0
 
