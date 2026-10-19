@@ -8,6 +8,7 @@ Wants=network-online.target
 Type=simple
 User=apex
 Group=apex
+UMask=0002
 WorkingDirectory=/opt/apex
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=-/etc/apex/apex.env

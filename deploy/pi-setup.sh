@@ -88,7 +88,14 @@ echo "==> Fetching speech models"
 # Run as root: $INSTALL_ROOT is still root-owned here, so the service user
 # cannot create models/. The chown below hands everything to $SERVICE_USER.
 bash "$INSTALL_ROOT/scripts/fetch_models.sh"
+mkdir -p "$INSTALL_ROOT/data/rides" "$INSTALL_ROOT/data/spool"
+if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" ]]; then
+  usermod -aG "$SERVICE_USER,i2c,dialout,audio,gpio" "$SUDO_USER" || true
+fi
 chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_ROOT"
+chmod -R g+rwX "$INSTALL_ROOT"
+chmod -R a+rwX "$INSTALL_ROOT/data"
+find "$INSTALL_ROOT" -type d -exec chmod g+s {} +
 
 echo "==> Installing systemd unit"
 mkdir -p /etc/apex
