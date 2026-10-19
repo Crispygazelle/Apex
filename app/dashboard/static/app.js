@@ -237,8 +237,16 @@ function probeTiles() {
 
 async function loadMapConfig() {
   try {
-    const response = await fetch('/api/map');
-    if (response.ok) tileConfig = await response.json();
+    const response = await fetch('/api/map', { cache: 'no-store' });
+    if (response.ok) {
+      tileConfig = await response.json();
+    } else if (response.status === 404) {
+      const gate = await fetch('/api/capabilities', { cache: 'no-store' });
+      if (gate.ok) {
+        location.replace('/?choose=' + Date.now());
+        return tileConfig;
+      }
+    }
   } catch { /* fall through to the public tile server */ }
   setTileSource(tileConfig.tile_source || (tileConfig.tiles_cached ? 'cached' : 'remote'));
   return tileConfig;
